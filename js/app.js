@@ -29,6 +29,12 @@
     ['Ostacoli', ['attento', 'attento_attento', 'autovelox', 'buca', 'dosso', 'scivola', 'ponte', 'lavori']]
   ];
   const EXITS = ['prima_uscita', 'seconda_uscita', 'terza_uscita', 'quarta_uscita', 'quinta_uscita', 'sesta_uscita'];
+  // comandi che il pacchetto non ha: si usano parole già registrate dalla stessa voce
+  // (se un giorno carichi la registrazione vera del comando, vale quella)
+  const ALIASES = {
+    autovelox: ['occhio'], lavori: ['attento', 'stretta'], ricalcolo: ['aspetta'], rotonda: ['gira'],
+    prima_uscita: ['_uno'], seconda_uscita: ['_due'], terza_uscita: ['_tre'], quarta_uscita: ['_quattro'], quinta_uscita: ['_cinque'], sesta_uscita: ['_sei']
+  };
 
   // ---------- memoria locale ----------
   const store = {
@@ -382,12 +388,12 @@
 
   // ---------- tocco sulla mappa: partenza, arrivo, ostacolo ----------
   const OBS = {
-    autovelox: { label: 'Autovelox', ch: 'V', tokens: ['attento', 'autovelox'] },
+    autovelox: { label: 'Autovelox', ch: 'V', tokens: ['autovelox'] },
     buca: { label: 'Buca', ch: 'B', tokens: ['buca'] },
     acqua: { label: 'Acqua / scivola', ch: 'A', tokens: ['scivola'] },
     dosso: { label: 'Dosso', ch: 'D', tokens: ['dosso'] },
     ponte: { label: 'Ponte stretto', ch: 'P', tokens: ['ponte'] },
-    lavori: { label: 'Lavori', ch: 'L', tokens: ['attento', 'lavori'] },
+    lavori: { label: 'Lavori', ch: 'L', tokens: ['lavori'] },
     pericolo: { label: 'Pericolo', ch: '!', tokens: ['attento_attento'] }
   };
   map.on('click', e => {
@@ -631,6 +637,9 @@
       if (refresh) updateStatus();
     }
     function has(token) { return [token, token + '1', token + '2', token + '_1', token + '_2'].some(c => clips.has(c)); }
+    // clip sostitutive della stessa voce per i comandi che mancano
+    function aliasOf(token) { const a = ALIASES[token]; return !has(token) && a && a.every(has) ? a : null; }
+    const expand = tokens => tokens.flatMap(t => aliasOf(t) || [t]);
     function unlock() {
       if (!ctx) {
         try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch { /* vecchio iOS */ }
@@ -678,13 +687,14 @@
       try {
         if (decoding) await decoding;
         if (!(ctx && buffers.size)) { await tts(tokens.map(P.tokenText).join(' ')); return; }
+        tokens = expand(tokens);
         let pend = [];
         const flush = async () => { if (pend.length) { await tts(pend.join(' ')); pend = []; } };
         for (const t of tokens) { const b = resolve(t); if (b) { await flush(); await playBuffer(b); } else pend.push(P.tokenText(t)); }
         await flush();
       } finally { speaking = false; }
     }
-    return { load, importFiles, setClip, has, unlock, say, get speaking() { return speaking; }, get count() { return clips.size; }, get decoded() { return buffers.size; } };
+    return { load, importFiles, setClip, has, aliasOf, unlock, say, get speaking() { return speaking; }, get count() { return clips.size; }, get decoded() { return buffers.size; } };
   })();
 
   // ---------- comandi vocali: elenco, prova, sostituisci, registra ----------
@@ -692,13 +702,14 @@
     const box = $('cmdList'); if (!box) return;
     let miss = 0;
     box.innerHTML = COMMANDS.map(([group, toks]) => `<div class="cmdgroup"><h4>${group}</h4>${toks.map(t => {
-      const ok = voice.has(t); if (!ok) miss++;
-      return `<div class="cmd ${ok ? 'ok' : 'miss'}" data-t="${t}"><span class="cn">${esc(P.tokenText(t))}</span><span class="cs">${ok ? 'voce' : 'sintesi'}</span>
+      const ok = voice.has(t), al = !ok && voice.aliasOf(t); if (!ok && !al) miss++;
+      const st = ok ? 'voce' : al ? 'dice: ' + al.map(a => P.tokenText(a).trim()).join(' ') : 'sintesi';
+      return `<div class="cmd ${ok ? 'ok' : al ? 'alias' : 'miss'}" data-t="${t}"><span class="cn">${esc(P.tokenText(t))}</span><span class="cs">${esc(st)}</span>
         <button class="cb" data-act="play" aria-label="Prova ${esc(P.tokenText(t))}">▶</button>
         <label class="cb" aria-label="Sostituisci con un file">File<input type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg" data-act="file"></label>
         <button class="cb rec" data-act="rec">Registra</button></div>`;
     }).join('')}</div>`).join('');
-    $('cmdMissing').textContent = miss ? `${miss} comandi senza voce: li legge la sintesi del telefono.` : 'Tutti i comandi hanno la voce del copilota.';
+    $('cmdMissing').textContent = miss ? `${miss} comandi senza voce: li legge la sintesi del telefono.` : 'Tutti i comandi usano la voce del copilota.';
   }
   let rec = null;
   $('cmdList').addEventListener('click', async e => {
