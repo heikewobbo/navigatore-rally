@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Copilota">
+<meta name="theme-color" content="#111317">
+<title>Copilota Rally</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;800&family=Barlow:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div id="map"></div>
+
+<!-- Pianificazione: partenza e arrivo -->
+<section id="plan" class="plan">
+  <div class="fields">
+    <div class="field">
+      <span class="dot from"></span>
+      <input id="inFrom" type="search" placeholder="Partenza" autocomplete="off" enterkeyhint="search">
+    </div>
+    <div class="field">
+      <span class="dot to"></span>
+      <input id="inTo" type="search" placeholder="Dove vuoi andare?" autocomplete="off" enterkeyhint="search">
+    </div>
+    <button id="btnSwap" class="iconbtn swap" aria-label="Inverti partenza e arrivo">
+      <svg viewBox="0 0 24 24"><path d="M7 4v13M7 17l-3-3M7 17l3-3M17 20V7M17 7l-3 3M17 7l3 3"/></svg>
+    </button>
+  </div>
+  <ul id="sugg" class="sugg" hidden></ul>
+</section>
+
+<button id="btnSettings" class="iconbtn fab gear" aria-label="Impostazioni">
+  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3L5.5 5.5"/></svg>
+</button>
+<button id="btnLocate" class="iconbtn fab locate" aria-label="Centra sulla mia posizione">
+  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+</button>
+
+<!-- Riepilogo percorso e note -->
+<section id="sheet" class="sheet" hidden>
+  <div class="grab"></div>
+  <div class="summary">
+    <div><b id="sumKm">–</b><span id="sumTime"></span></div>
+    <div class="count"><b id="sumNotes">0</b><span>note</span></div>
+  </div>
+  <div id="alts" class="alts"></div>
+  <div class="actions">
+    <button id="btnSim" class="btn ghost">Simula</button>
+    <button id="btnGo" class="btn go">Parti</button>
+  </div>
+  <ol id="noteList" class="notelist"></ol>
+</section>
+
+<!-- Guida -->
+<section id="drive" class="drive" hidden>
+  <div class="callcard" id="callCard">
+    <div class="cicon" id="dIcon"></div>
+    <div class="cbody">
+      <div class="ctext" id="dText">Pronti</div>
+      <div class="cdist" id="dDist"></div>
+    </div>
+  </div>
+  <div class="nextrow" id="dNext"></div>
+</section>
+<section id="dbar" class="dbar" hidden>
+  <div class="spd"><b id="dSpd">0</b><span>km/h</span></div>
+  <div class="rem"><b id="dRem">–</b><span id="dMode">GPS</span></div>
+  <button id="btnRepeat" class="btn ghost small">Ripeti</button>
+  <button id="btnStop" class="btn stop small">Stop</button>
+</section>
+
+<!-- Impostazioni -->
+<div id="settings" class="modal" hidden>
+  <div class="panel">
+    <header><h2>Impostazioni</h2><button id="btnCloseSet" class="iconbtn" aria-label="Chiudi"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+
+    <h3>Voce del copilota</h3>
+    <p id="voiceStatus" class="muted">Nessuna voce caricata: uso la sintesi vocale del telefono.</p>
+    <div class="row">
+      <label class="btn ghost filebtn">Carica voci (.zip)<input id="inVoices" type="file" accept=".zip,application/zip,audio/*" multiple></label>
+      <button id="btnTestVoice" class="btn ghost">Prova</button>
+    </div>
+
+    <h3>Chiamate</h3>
+    <label class="slider">Anticipo <output id="oLead">4,5 s</output>
+      <input id="sLead" type="range" min="2" max="9" step="0.5" value="4.5"></label>
+    <label class="slider">Taratura curve <output id="oScale">normale</output>
+      <input id="sScale" type="range" min="0.7" max="1.4" step="0.05" value="1"></label>
+    <p class="hint">Verso destra i numeri scendono (note più prudenti), verso sinistra salgono.</p>
+    <label class="toggle"><input id="tFlat" type="checkbox" checked><span>Chiama le "piena"</span></label>
+    <label class="toggle"><input id="tDist" type="checkbox" checked><span>Chiama le distanze</span></label>
+    <label class="toggle"><input id="tNav" type="checkbox" checked><span>Indicazioni a incroci e rotonde</span></label>
+    <label class="toggle"><input id="tCams" type="checkbox" checked><span>Autovelox da OpenStreetMap</span></label>
+
+    <h3>Mappa e simulazione</h3>
+    <label class="toggle"><input id="tLight" type="checkbox"><span>Mappa chiara</span></label>
+    <label class="slider">Velocità simulazione <output id="oSim">80 km/h</output>
+      <input id="sSim" type="range" min="30" max="140" step="10" value="80"></label>
+
+    <h3>Ostacoli segnati</h3>
+    <p class="muted"><span id="obsCount">0</span> ostacoli. Tocca la mappa per segnarne uno nuovo.</p>
+    <button id="btnClearObs" class="btn ghost">Cancella tutti</button>
+
+    <h3>Legenda</h3>
+    <div id="legend" class="legend"></div>
+    <p class="hint">Le note sono calcolate dalla forma delle strade di OpenStreetMap: tienile un po' più larghe di quello che dicono.</p>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script src="vendor/jszip.min.js"></script>
+<script src="js/pacenotes.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
