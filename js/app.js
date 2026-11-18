@@ -912,13 +912,13 @@
   $('inVoices').addEventListener('change', async e => {
     const files = [...e.target.files]; if (!files.length) return;
     $('voiceStatus').textContent = 'Carico le voci…';
-    try { const n = await voice.importFiles(files); toast(n + ' clip caricate'); voice.unlock(); }
+    try { const n = await voice.importFiles(files); toast(n + ' clip caricate'); voice.unlock(); keepData(); }
     catch (err) { toast('Non sono riuscito a leggere le voci: ' + err.message, 5000); voice.load(); }
     e.target.value = '';
   });
   $('inCars').addEventListener('change', async e => {
     const files = [...e.target.files]; if (!files.length) return;
-    try { const n = await importCars(files); toast(n + (n === 1 ? ' auto caricata' : ' auto caricate')); renderCars(); }
+    try { const n = await importCars(files); toast(n + (n === 1 ? ' auto caricata' : ' auto caricate')); renderCars(); keepData(); }
     catch (err) { toast('Non sono riuscito a leggere le auto: ' + err.message, 6000); }
     e.target.value = '';
   });
@@ -929,8 +929,12 @@
     return `<div>${iconHTML(nt)}${g === 'piena' ? 'Piena' : g === 'tornante' ? 'Tornante' : g === 90 ? '90 secca' : g}</div>`;
   }).join('');
 
+  // chiede a Safari di non cancellare voci e auto quando serve spazio
+  const keepData = () => { try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch { /* non supportato */ } };
+
   // ---------- avvio ----------
   bindSettings();
+  keepData();
   renderCars();
   loadCustomCars().then(() => { renderCars(); car.redraw(); });
   whenReady(() => { drawObstacles(); drawPins(); });
