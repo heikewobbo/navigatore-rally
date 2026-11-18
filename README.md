@@ -9,7 +9,9 @@ Scegli partenza e arrivo, l'app calcola il percorso e trasforma la forma della s
 3. Scrivi la destinazione e la partenza ("La mia posizione" va bene), poi **Simula** per ascoltare le note da casa, oppure **Parti**.
 4. Impostazioni → **La tua auto**: scegli tra le auto disegnate (Freccia, Rally2, Gruppo B, Classica '70) e le livree, oppure carica le tue foto con **Carica foto auto (.zip)** (file `Nome__top.png` dall'alto col muso in su, `Nome__rear.png` da dietro; restano sul telefono). In guida la vista è 3D da dietro l'auto, oppure 2D dall'alto con la direzione in su.
 5. Impostazioni → **Comandi vocali**: l'elenco di tutto quello che il copilota può dire; per ogni comando puoi ascoltarlo, sostituirlo con un file o registrarlo col microfono.
-6. Tocca la mappa per segnare ostacoli (buca, dosso, acqua, ponte, lavori, autovelox, pericolo): il copilota li chiama quando ci arrivi.
+6. **Ricognizione**: nell'elenco note tocca la matita per correggere una nota (numero, direzione, lunga, stringe, incrocio…) o eliminarla; tocca la mappa sul percorso per aggiungere una curva. Poi **Salva prova**: il pulsante con la bandierina riapre le prove salvate, anche senza connessione. Le mappe già viste restano in memoria (fai una volta "Simula" con la rete).
+7. **Taratura**: guidando col GPS l'app registra la velocità in ogni curva e propone la taratura adatta al tuo stile (Impostazioni → Taratura sul tuo stile).
+8. Tocca la mappa per segnare ostacoli (buca, dosso, acqua, ponte, lavori, autovelox, pericolo): il copilota li chiama quando ci arrivi.
 
 Il telefono deve restare con lo schermo acceso sul supporto. Se non senti la voce, controlla l'interruttore silenzioso.
 

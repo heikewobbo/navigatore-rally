@@ -42,6 +42,9 @@
 <button id="btnSettings" class="iconbtn fab gear" aria-label="Impostazioni">
   <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3L5.5 5.5"/></svg>
 </button>
+<button id="btnStages" class="iconbtn fab stagesbtn" aria-label="Prove salvate">
+  <svg viewBox="0 0 24 24"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>
+</button>
 <button id="btnLocate" class="iconbtn fab locate" aria-label="Centra sulla mia posizione">
   <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
 </button>
@@ -53,6 +56,7 @@
     <div><b id="sumKm">–</b><span id="sumTime"></span></div>
     <div class="count"><b id="sumNotes">0</b><span>note</span></div>
   </div>
+  <div id="stageBar" class="stagebar"><span id="stageName">Note calcolate</span><button id="btnSaveStage" class="chip">Salva prova</button></div>
   <div id="alts" class="alts"></div>
   <div class="actions">
     <button id="btnSim" class="btn ghost">Simula</button>
@@ -123,6 +127,13 @@
     <label class="toggle"><input id="tNav" type="checkbox" checked><span>Indicazioni a incroci e rotonde</span></label>
     <label class="toggle"><input id="tCams" type="checkbox" checked><span>Autovelox da OpenStreetMap</span></label>
 
+    <h3>Taratura sul tuo stile</h3>
+    <label class="toggle"><input id="tLearn" type="checkbox" checked><span>Registra la velocità in curva mentre guidi</span></label>
+    <p id="calibStatus" class="muted"></p>
+    <div id="calibTable" class="calib"></div>
+    <div class="row"><button id="btnCalibApply" class="btn ghost">Applica taratura</button><button id="btnCalibReset" class="btn ghost">Azzera dati</button></div>
+    <p class="hint">L'app guarda a che velocità fai davvero le curve e calcola quanto "tiri": se le fai più forte del previsto i numeri salgono, se le fai più piano scendono. I dati restano sul telefono.</p>
+
     <h3>Mappa e simulazione</h3>
     <label class="select">Mappa
       <select id="selMap">
@@ -142,6 +153,41 @@
     <div id="legend" class="legend"></div>
     <p class="hint">Le note sono calcolate dalla forma delle strade di OpenStreetMap: tienile un po' più larghe di quello che dicono.</p>
   </div>
+</div>
+
+<!-- Ricognizione: correggi una nota -->
+<div id="noteEd" class="modal" hidden>
+  <div class="panel ed">
+    <header><h2 id="edTitle">Correggi nota</h2><button id="btnEdClose" class="iconbtn" aria-label="Chiudi"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+    <div id="edPick" class="seg"></div>
+    <div id="edPrev" class="edprev"></div>
+    <div id="edCorner">
+      <div id="edDir" class="seg"></div>
+      <div id="edGrade" class="gradegrid"></div>
+      <div id="edMods" class="modgrid"></div>
+    </div>
+    <div class="edactions">
+      <button id="edPlay" class="btn ghost">Ascolta</button>
+      <button id="edDel" class="btn ghost danger">Elimina</button>
+      <button id="edOk" class="btn go">Fatto</button>
+    </div>
+  </div>
+</div>
+
+<!-- Prove salvate -->
+<div id="stagesModal" class="modal" hidden>
+  <div class="panel">
+    <header><h2>Prove salvate</h2><button id="btnStagesClose" class="iconbtn" aria-label="Chiudi"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+    <p class="hint">Una prova salvata tiene il percorso e le tue note corrette e funziona anche senza connessione. Le mappe restano in memoria per le zone che hai già visto: fai "Simula" una volta con la rete e poi le hai anche senza campo.</p>
+    <ul id="stageList" class="stagelist"></ul>
+  </div>
+</div>
+<div id="saveModal" class="modal" hidden>
+  <form id="saveForm" class="panel small">
+    <h2>Salva prova</h2>
+    <label class="select">Nome<input id="inStageName" type="text" maxlength="60" autocomplete="off" enterkeyhint="done"></label>
+    <div class="edactions"><button type="button" id="btnSaveCancel" class="btn ghost">Annulla</button><button type="submit" class="btn go">Salva</button></div>
+  </form>
 </div>
 
 <div id="toast" class="toast" hidden></div>

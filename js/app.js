@@ -41,7 +41,7 @@
     get(k, d) { try { const v = localStorage.getItem('cr.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem('cr.' + k, JSON.stringify(v)); } catch { /* niente */ } }
   };
-  const settings = Object.assign({ lead: 4.5, scale: 1, flat: true, dist: true, nav: true, cams: true, mapStyle: 'dark', sim: 80, car: 'rally2', livery: 'bianca', view: '3d', car3d: 'flat' }, store.get('settings', {}));
+  const settings = Object.assign({ lead: 4.5, scale: 1, flat: true, dist: true, nav: true, cams: true, mapStyle: 'dark', sim: 80, car: 'rally2', livery: 'bianca', view: '3d', car3d: 'flat', learn: true }, store.get('settings', {}));
   if (!TILES[settings.mapStyle]) settings.mapStyle = settings.light ? 'light' : 'dark';
   let obstacles = store.get('obstacles', []);
   let recents = store.get('recents', []);
@@ -50,14 +50,15 @@
   const db = (() => {
     let p = null;
     const open = () => p || (p = new Promise((res, rej) => {
-      const r = indexedDB.open('copilota', 2);
-      r.onupgradeneeded = () => { for (const st of ['clips', 'cars']) if (!r.result.objectStoreNames.contains(st)) r.result.createObjectStore(st); };
+      const r = indexedDB.open('copilota', 3);
+      r.onupgradeneeded = () => { for (const st of ['clips', 'cars', 'stages', 'calib']) if (!r.result.objectStoreNames.contains(st)) r.result.createObjectStore(st); };
       r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
     }));
     const tx = async (st, mode, fn) => { const d = await open(); return new Promise((res, rej) => { const t = d.transaction(st, mode); const out = fn(t.objectStore(st)); t.oncomplete = () => res(out); t.onerror = () => rej(t.error); }); };
     return {
       replaceAll: (st, m) => tx(st, 'readwrite', s => { s.clear(); for (const [k, v] of m) s.put(v, k); }),
       put: (st, k, v) => tx(st, 'readwrite', s => s.put(v, k)),
+      async get(st, k) { const d = await open(); return new Promise((res, rej) => { const req = d.transaction(st).objectStore(st).get(k); req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error); }); },
       del: (st, keys) => tx(st, 'readwrite', s => keys.forEach(k => s.delete(k))),
       async getAll(st) { const d = await open(); return new Promise((res, rej) => { const out = new Map(); const req = d.transaction(st).objectStore(st).openCursor(); req.onsuccess = () => { const c = req.result; if (c) { out.set(c.key, c.value); c.continue(); } else res(out); }; req.onerror = () => rej(req.error); }); }
     };
@@ -158,6 +159,9 @@
   let popup = null, skipClick = false;
   function openPopup(lnglat, html) {
     if (popup) popup.remove();
+    $('sheet').classList.add('min'); // il foglio note si abbassa per non coprire il menu
+    const pt = map.project(lnglat), H = map.getContainer().clientHeight;
+    if (pt.y > H * 0.45) map.easeTo({ center: map.unproject([map.getContainer().clientWidth / 2, H / 2 + (pt.y - H * 0.35)]), duration: 300 });
     popup = new maplibregl.Popup({ closeButton: false, maxWidth: '280px', offset: 12 }).setLngLat(lnglat).setHTML(html).addTo(map);
     return popup.getElement();
   }
@@ -407,12 +411,15 @@
       if (f.length) { selectRoute(f[0].properties.idx, false); return; }
     }
     const ll = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+    const onRoute = cur && projectOnRoute(ll.lat, ll.lng, cur.gen.route);
     const el = openPopup(e.lngLat, `<div class="pop"><h4>${ll.lat.toFixed(5)}, ${ll.lng.toFixed(5)}</h4>
+      ${onRoute && onRoute.d < 40 ? '<button class="pb hl" data-add="1">Aggiungi una curva qui</button>' : ''}
       <button class="pb" data-a="from">Parti da qui</button><button class="pb" data-a="to">Arriva qui</button>
       <h4 style="margin-top:12px">Segna un ostacolo</h4><div class="grid">${Object.entries(OBS).map(([k, o]) => `<button class="pb" data-o="${k}">${o.label}</button>`).join('')}</div></div>`);
     el.addEventListener('click', async ev => {
       const b = ev.target.closest('button'); if (!b) return;
       closePopup();
+      if (b.dataset.add) { editor.addAt(onRoute.s); return; }
       if (b.dataset.o) { obstacles.push({ lat: ll.lat, lon: ll.lng, type: b.dataset.o }); saveObstacles(); toast(OBS[b.dataset.o].label + ' segnato'); refreshNotes(); return; }
       const key = b.dataset.a;
       const place = { lat: ll.lat, lon: ll.lng, name: 'Punto sulla mappa', sub: '' };
@@ -457,20 +464,22 @@
       selectRoute(0, !drive.on);
       if (settings.cams) loadCameras();
     } catch (e) {
-      toast(drive.on ? 'Ricalcolo non riuscito, riprovo…' : 'Percorso non trovato o servizio non raggiungibile', 4000);
+      toast(drive.on ? 'Ricalcolo non riuscito, riprovo…' : !navigator.onLine ? 'Senza connessione: apri una prova salvata' : 'Percorso non trovato o servizio non raggiungibile', 4000);
       throw e;
     }
   }
   function selectRoute(i, fit) {
     routeIdx = i;
     const osrm = routes[i], coords = osrm.geometry.coordinates;
-    cur = { gen: P.generate(coords, genOptions()), osrm, coords };
+    cur = { gen: P.generate(coords, genOptions()), osrm, coords, stage: null, stageName: '', edited: false };
+    cur.base = computeBase();
     buildNotes(); drawRoute(fit); renderSheet();
   }
   function genOptions() { return { scale: settings.scale, callFlat: settings.flat }; }
-  function refreshNotes() {
+  function refreshNotes(fromSettings) {
     if (!cur) return;
-    if (!drive.on) cur.gen = P.generate(cur.coords, genOptions());
+    if (!drive.on && !cur.edited) { cur.gen = P.generate(cur.coords, genOptions()); cur.base = computeBase(); }
+    else if (fromSettings && cur.edited) toast('Questo percorso ha note corrette a mano: la modifica vale per i percorsi nuovi', 4000);
     buildNotes(); drawRoute(false); renderSheet();
     if (drive.on) drive.resync();
   }
@@ -497,7 +506,9 @@
   }
   function routeBearing(route, s) { return bearingLL(pointAtS(route, s - 4).ll, pointAtS(route, Math.min(route.length, s + 22)).ll); }
 
-  function buildNotes() {
+  let noteSeq = 1;
+  // note del percorso (curve, incroci, rotonde, arrivo): sono quelle che si correggono e si salvano
+  function computeBase() {
     const { gen, osrm } = cur, route = gen.route;
     let notes = gen.notes.map(n => Object.assign({}, n, { mods: n.mods.slice(), junction: false }));
     const extra = [];
@@ -528,15 +539,23 @@
         }
       });
     }
+    extra.push({ kind: 'finish', label: 'Arrivo', startS: Math.max(0, route.length - 40), endS: route.length, tokens: ['fine'] });
+    notes = notes.concat(extra).sort((x, y) => x.startS - y.startS);
+    notes.forEach(n => { n.id = noteSeq++; delete n.into; delete n.dist; });
+    return notes;
+  }
+  // note finali = note base + ostacoli segnati + autovelox
+  function buildNotes() {
+    const route = cur.gen.route;
+    const notes = cur.base.map(n => Object.assign({}, n, n.mods ? { mods: n.mods.slice() } : {}, n.tokens ? { tokens: n.tokens.slice() } : {}));
     const obsList = obstacles.map(o => ({ ...o })).concat(settings.cams ? cams.map(c => ({ ...c, type: 'autovelox' })) : []);
     for (const o of obsList) {
       const pr = projectOnRoute(o.lat, o.lon, route);
       if (pr.d > 25) continue;
-      extra.push({ kind: 'obs', obsType: o.type, label: OBS[o.type].label, startS: Math.max(0, pr.s - 10), endS: pr.s, tokens: OBS[o.type].tokens.slice() });
+      notes.push({ kind: 'obs', obsType: o.type, label: OBS[o.type].label, startS: Math.max(0, pr.s - 10), endS: pr.s, tokens: OBS[o.type].tokens.slice() });
     }
-    extra.push({ kind: 'finish', label: 'Arrivo', startS: Math.max(0, route.length - 40), endS: route.length, tokens: ['fine'] });
-    notes = notes.concat(extra).sort((x, y) => x.startS - y.startS);
-    P.linkDistances(notes, route.length, gen.cfg);
+    notes.sort((x, y) => x.startS - y.startS);
+    P.linkDistances(notes, route.length, cur.gen.cfg);
     cur.notes = notes;
     cur.calls = P.buildCalls(notes);
   }
@@ -572,10 +591,15 @@
     $('sumTime').textContent = fmtMin(cur.osrm.duration);
     $('sumNotes').textContent = cur.notes.filter(n => n.kind === 'corner').length;
     $('alts').innerHTML = routes.length > 1 ? routes.map((r, i) => `<button data-i="${i}" class="${i === routeIdx ? 'on' : ''}">${fmtKm(r.distance)} · ${fmtMin(r.duration)}</button>`).join('') : '';
-    $('noteList').innerHTML = cur.calls.map(c => `<li data-c="${c.id}">${iconHTML(c.notes[0])}<div class="nt">${esc(callTitle(c))}</div><div class="nm">${fmtKm(c.startS)}</div></li>`).join('');
+    $('noteList').innerHTML = cur.calls.map(c => `<li data-c="${c.id}">${iconHTML(c.notes[0])}<div class="nt">${esc(callTitle(c))}</div><div class="nm">${fmtKm(c.startS)}</div>${c.notes.some(n => n.id) ? `<button class="edit" data-e="${c.id}" aria-label="Modifica nota"><svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></button>` : '<span></span>'}</li>`).join('');
+    $('stageName').textContent = cur.stage ? cur.stageName : cur.edited ? 'Note corrette, non salvate' : 'Note calcolate';
+    $('stageBar').classList.toggle('saved', !!cur.stage);
+    $('btnSaveStage').textContent = cur.stage ? 'Rinomina' : 'Salva prova';
   }
   $('alts').addEventListener('click', e => { const b = e.target.closest('button'); if (b) selectRoute(+b.dataset.i, false); });
   $('noteList').addEventListener('click', e => {
+    const ed = e.target.closest('.edit');
+    if (ed) { const c = cur.calls[+ed.dataset.e]; const n = c.notes.find(x => x.id && x.kind === 'corner') || c.notes.find(x => x.id); if (n) editor.open(n.id, c); return; }
     const li = e.target.closest('li'); if (!li) return;
     const c = cur.calls[+li.dataset.c], at = pointAtS(cur.gen.route, c.startS + 20).ll;
     map.easeTo({ center: [at[1], at[0]], zoom: 16, duration: 500 });
@@ -773,6 +797,7 @@
       clearInterval(this.timer); clearInterval(this.simTimer);
       if ('speechSynthesis' in window) speechSynthesis.cancel();
       if (this.lock) { this.lock.release().catch(() => {}); this.lock = null; }
+      nosleep.off(); this.cc = null;
       document.body.classList.remove('driving');
       $('drive').hidden = true; $('dbar').hidden = true;
       labelMarkers.forEach(m => m.getElement().classList.remove('near'));
@@ -780,7 +805,10 @@
       map.easeTo({ pitch: 0, bearing: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 }, duration: 400 });
       setTimeout(fitRoute, 450);
     },
-    async wake() { try { if ('wakeLock' in navigator) this.lock = await navigator.wakeLock.request('screen'); } catch { /* non supportato */ } },
+    async wake() {
+      try { if ('wakeLock' in navigator) this.lock = await navigator.wakeLock.request('screen'); } catch { /* non supportato */ }
+      nosleep.on();
+    },
     startSim() {
       let s = 0, v = 0, last = Date.now();
       const vmax = { piena: 130, 6: 115, 5: 100, 4: 85, 3: 70, 2: 55, 1: 42, 90: 30, tornante: 25 };
@@ -810,8 +838,24 @@
       if (heading != null) this.lastHeading = heading;
       else if (prev && distLL(prev.ll, [lat, lon]) > 5) this.lastHeading = bearingLL(prev.ll, [lat, lon]);
       this.fix = { s: pr.s, i: pr.i, t, v, d: pr.d, ll: [lat, lon] };
-      if (!this.sim && pr.d > 60 && (acc || 99) < 60) this.off++; else this.off = 0;
-      if (this.off >= 4 && !this.rerouting) this.reroute(lat, lon);
+      if (!this.sim && pr.d > 60 && (acc || 99) < 60) this.off++; else { this.off = 0; this.offWarned = false; }
+      if (this.off >= 4 && !this.rerouting) {
+        // su una prova salvata non si ricalcola: si avvisa e si aspetta che torni sul percorso
+        if (cur.stage) { if (!this.offWarned) { this.offWarned = true; toast('Sei fuori dal percorso della prova', 4000); voice.say(['attento']); } }
+        else this.reroute(lat, lon);
+      }
+      if (!this.sim && settings.learn) this.learn(pr.s, v, pr.d);
+    },
+    // taratura: velocità minima in ogni curva fatta davvero (solo GPS)
+    learn(s, v, d) {
+      if (d > 25) { this.cc = null; return; }
+      if (this.cc && s > this.cc.note.endS + 10) {
+        const n = this.cc.note;
+        if (this.cc.vmin > 4 && n.radius && !n.manual) calib.add({ R: n.radius, g: String(gkey(n)), a: n.angle, v: this.cc.vmin });
+        this.cc = null;
+      }
+      if (!this.cc) { const n = cur.notes.find(x => x.kind === 'corner' && s >= x.startS - 10 && s <= x.endS + 10); if (n) this.cc = { note: n, vmin: v }; }
+      else this.cc.vmin = Math.min(this.cc.vmin, v);
     },
     async reroute(lat, lon) {
       this.rerouting = true; this.off = 0;
@@ -893,6 +937,209 @@
     if (c) voice.say(callTokensFiltered(c));
   });
 
+  // ---------- ricognizione: correggere le note ----------
+  const GRADES = ['piena', 6, 5, 4, 3, 2, 1, 90, 'tornante'];
+  const MODS = [['lunga', 'Lunga'], ['molto_lunga', 'Molto lunga'], ['stringe', 'Stringe'], ['apre', 'Apre'], ['junction', 'Incrocio']];
+  const editor = {
+    id: null, draft: null, isNew: false, call: null,
+    open(id, call, isNew = false) {
+      const n = cur.base.find(x => x.id === id); if (!n) return;
+      this.id = id; this.isNew = isNew; this.call = call || null;
+      this.draft = JSON.parse(JSON.stringify(n));
+      this.render(); $('noteEd').hidden = false;
+    },
+    addAt(s) {
+      const route = cur.gen.route;
+      const turn = angDiff(routeBearing(route, s + 25), routeBearing(route, s - 15));
+      const a = pointAtS(route, Math.max(0, s - 5)).i, b = pointAtS(route, Math.min(route.length, s + 30)).i;
+      const n = { kind: 'corner', dir: turn >= 0 ? 'destra' : 'sinistra', grade: 4, mods: [], junction: false, startS: Math.max(0, s - 5), endS: Math.min(route.length, s + 30), apexS: s, i0: a, i1: Math.max(a + 1, b), radius: 0, angle: Math.round(Math.abs(turn)), manual: true, id: noteSeq++ };
+      cur.base.push(n); cur.base.sort((x, y) => x.startS - y.startS);
+      this.open(n.id, null, true);
+    },
+    render() {
+      const d = this.draft, corner = d.kind === 'corner';
+      const g = corner ? gkey(d) : null;
+      const siblings = this.call ? this.call.notes.filter(x => x.id) : [];
+      $('edPick').innerHTML = siblings.length > 1 ? siblings.map(x => `<button data-id="${x.id}" class="${x.id === d.id ? 'on' : ''}">${esc(x.kind === 'corner' ? P.shortLabel(x) : x.label)}</button>`).join('') : '';
+      $('edPick').hidden = siblings.length < 2;
+      $('edCorner').hidden = !corner;
+      if (corner) {
+        $('edDir').innerHTML = ['sinistra', 'destra'].map(v => `<button data-d="${v}" class="${d.dir === v ? 'on' : ''}">${v === 'sinistra' ? 'Sinistra' : 'Destra'}</button>`).join('');
+        $('edGrade').innerHTML = GRADES.map(v => { const nt = { kind: 'corner', dir: d.dir, grade: v === 90 ? 2 : v, mods: v === 90 ? ['secca'] : [] }; return `<button data-g="${v}" class="${String(g) === String(v) ? 'on' : ''}">${iconHTML(nt)}<span>${v === 'piena' ? 'Piena' : v === 'tornante' ? 'Tornante' : v === 90 ? '90' : v}</span></button>`; }).join('');
+        $('edMods').innerHTML = MODS.map(([k, l]) => `<button data-m="${k}" class="${(k === 'junction' ? d.junction : d.mods.includes(k)) ? 'on' : ''}">${l}</button>`).join('');
+      }
+      $('edPrev').innerHTML = `${iconHTML(d)}<b>${esc(corner ? P.tokensText(P.noteTokens(d)) : d.label || '')}</b>`;
+      $('edTitle').textContent = this.isNew ? 'Nuova curva' : 'Correggi nota';
+    },
+    commit() {
+      const i = cur.base.findIndex(x => x.id === this.id);
+      if (i >= 0) cur.base[i] = this.draft;
+      this.close(true); changed();
+    },
+    remove() {
+      cur.base = cur.base.filter(x => x.id !== this.id);
+      this.close(true); changed(); toast('Nota eliminata');
+    },
+    close(keep) {
+      if (!keep && this.isNew) cur.base = cur.base.filter(x => x.id !== this.id);
+      $('noteEd').hidden = true; this.id = null;
+    }
+  };
+  function changed() {
+    cur.edited = true;
+    buildNotes(); drawRoute(false); renderSheet();
+    if (drive.on) drive.resync();
+    if (cur.stage) stages.save(cur.stageName, true);
+  }
+  $('noteEd').addEventListener('click', e => {
+    if (e.target === $('noteEd')) return editor.close();
+    const b = e.target.closest('button'); if (!b) return;
+    const d = editor.draft;
+    if (b.dataset.id) { editor.open(+b.dataset.id, editor.call); return; }
+    if (b.dataset.d) d.dir = b.dataset.d;
+    if (b.dataset.g) {
+      const v = b.dataset.g;
+      d.mods = d.mods.filter(m => m !== 'secca');
+      if (v === '90') { d.grade = 2; d.mods.push('secca'); }
+      else d.grade = /^\d$/.test(v) ? +v : v;
+      if (d.grade === 'tornante' || v === '90') d.mods = d.mods.filter(m => !/lunga/.test(m));
+    }
+    if (b.dataset.m) {
+      const k = b.dataset.m;
+      if (k === 'junction') d.junction = !d.junction;
+      else if (d.mods.includes(k)) d.mods = d.mods.filter(m => m !== k);
+      else {
+        const excl = { lunga: 'molto_lunga', molto_lunga: 'lunga', stringe: 'apre', apre: 'stringe' };
+        d.mods = d.mods.filter(m => m !== excl[k]); d.mods.push(k);
+        const order = ['secca', 'lunga', 'molto_lunga', 'stringe', 'apre']; d.mods.sort((x, y) => order.indexOf(x) - order.indexOf(y));
+      }
+    }
+    if (b.id === 'edPlay') { voice.unlock(); voice.say(d.kind === 'corner' ? P.noteTokens(d) : d.tokens || []); return; }
+    if (b.id === 'edDel') return editor.remove();
+    if (b.id === 'edOk') return editor.commit();
+    if (b.id === 'btnEdClose') return editor.close();
+    editor.render();
+  });
+
+  // ---------- prove salvate ----------
+  const stages = {
+    async save(name, quiet) {
+      if (!cur) return;
+      const id = cur.stage || ('s' + Date.now());
+      const old = cur.stage ? await db.get('stages', id).catch(() => null) : null;
+      const rec = {
+        id, name, created: old ? old.created : Date.now(), updated: Date.now(),
+        from: places.from, to: places.to,
+        osrm: { distance: cur.osrm.distance, duration: cur.osrm.duration, geometry: cur.osrm.geometry },
+        base: cur.base
+      };
+      try { await db.put('stages', id, rec); } catch { toast('Non sono riuscito a salvare la prova'); return; }
+      cur.stage = id; cur.stageName = name; cur.edited = true;
+      renderSheet(); keepData();
+      if (!quiet) toast('Prova salvata: funziona anche senza connessione');
+    },
+    async open(id) {
+      const st = await db.get('stages', id); if (!st) return;
+      if (drive.on) drive.stop();
+      routes = [st.osrm]; routeIdx = 0;
+      const coords = st.osrm.geometry.coordinates;
+      cur = { gen: P.generate(coords, genOptions()), osrm: st.osrm, coords, base: st.base, stage: id, stageName: st.name, edited: true };
+      noteSeq = Math.max(noteSeq, ...st.base.map(n => (n.id || 0) + 1));
+      places.from = st.from; places.to = st.to;
+      $('inFrom').value = st.from ? st.from.name : ''; $('inTo').value = st.to ? st.to.name : '';
+      drawPins(); buildNotes(); drawRoute(true); renderSheet();
+      $('stagesModal').hidden = true;
+      if (settings.cams && navigator.onLine) loadCameras();
+    },
+    async list() {
+      const all = [...(await db.getAll('stages').catch(() => new Map())).values()].sort((a, b) => b.updated - a.updated);
+      $('stageList').innerHTML = all.length ? all.map(st => `<li data-id="${st.id}"><div class="si"><b>${esc(st.name)}</b><span>${fmtKm(st.osrm.distance)} · ${st.base.filter(n => n.kind === 'corner').length} note · ${new Date(st.updated).toLocaleDateString('it-IT')}</span></div>
+        <button class="btn ghost small" data-open="1">Apri</button><button class="btn ghost small del" data-del="1">Elimina</button></li>`).join('')
+        : '<li class="empty">Nessuna prova salvata. Calcola un percorso, correggi le note e premi "Salva prova".</li>';
+    }
+  };
+  $('btnStages').addEventListener('click', () => { stages.list(); $('stagesModal').hidden = false; });
+  $('stagesModal').addEventListener('click', async e => {
+    if (e.target === $('stagesModal') || e.target.closest('#btnStagesClose')) { $('stagesModal').hidden = true; return; }
+    const b = e.target.closest('button'); const li = e.target.closest('li[data-id]'); if (!b || !li) return;
+    if (b.dataset.open) stages.open(li.dataset.id);
+    if (b.dataset.del) {
+      if (!b.classList.contains('confirm')) { b.classList.add('confirm'); b.textContent = 'Conferma'; return; }
+      await db.del('stages', [li.dataset.id]);
+      if (cur && cur.stage === li.dataset.id) { cur.stage = null; renderSheet(); }
+      stages.list();
+    }
+  });
+  $('btnSaveStage').addEventListener('click', () => {
+    if (!cur) return;
+    const def = cur.stageName || [places.from && !places.from.me ? places.from.name : '', places.to ? places.to.name : ''].filter(Boolean).join(' → ') || 'Prova';
+    $('inStageName').value = def; $('saveModal').hidden = false; setTimeout(() => $('inStageName').select(), 50);
+  });
+  $('saveForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const name = $('inStageName').value.trim() || 'Prova';
+    $('saveModal').hidden = true; stages.save(name);
+  });
+  $('saveModal').addEventListener('click', e => { if (e.target === $('saveModal') || e.target.closest('#btnSaveCancel')) $('saveModal').hidden = true; });
+
+  // ---------- taratura sul tuo modo di guidare ----------
+  const A_REF = 4.0; // accelerazione laterale (m/s²) per cui sono pensate le soglie normali
+  const calib = {
+    samples: [],
+    async load() { try { this.samples = (await db.get('calib', 'samples')) || []; } catch { this.samples = []; } renderCalib(); },
+    add(x) {
+      x.t = Date.now(); this.samples.push(x);
+      if (this.samples.length > 3000) this.samples.splice(0, this.samples.length - 3000);
+      db.put('calib', 'samples', this.samples).catch(() => {});
+      renderCalib();
+    },
+    analyze() {
+      const ok = this.samples.filter(x => x.R > 0 && x.R <= 150 && x.v >= 4);
+      const per = {};
+      for (const x of ok) { const k = x.g; (per[k] = per[k] || []).push(x.v * 3.6); }
+      if (ok.length < 12) return { n: ok.length, per };
+      const acc = ok.map(x => x.v * x.v / x.R).sort((a, b) => a - b);
+      const a = acc[Math.floor(acc.length * 0.7)];
+      const scale = Math.round(Math.max(0.7, Math.min(1.4, A_REF / a)) * 20) / 20;
+      return { n: ok.length, a, scale, per };
+    }
+  };
+  function scaleName(v) { return v < 0.95 ? 'aggressiva' : v > 1.05 ? 'prudente' : 'normale'; }
+  function renderCalib() {
+    const r = calib.analyze();
+    $('calibStatus').textContent = r.scale == null
+      ? `Curve registrate: ${r.n}. Ne servono almeno 12, guidando col GPS (la simulazione non conta).`
+      : `Su ${r.n} curve registrate la taratura adatta a te è "${scaleName(r.scale)}" (${String(r.scale).replace('.', ',')}). Ora è "${scaleName(settings.scale)}" (${String(settings.scale).replace('.', ',')}).`;
+    const order = ['piena', '6', '5', '4', '3', '2', '1', '90', 'tornante'];
+    $('calibTable').innerHTML = order.filter(k => r.per[k]).map(k => { const v = r.per[k]; return `<div><span>${k === 'piena' ? 'Piena' : k === 'tornante' ? 'Tornante' : k}</span><b>${Math.round(v.reduce((a, b) => a + b, 0) / v.length)} km/h</b><small>${v.length} curve</small></div>`; }).join('');
+    $('btnCalibApply').disabled = r.scale == null || r.scale === settings.scale;
+  }
+  $('btnCalibApply').addEventListener('click', () => {
+    const r = calib.analyze(); if (r.scale == null) return;
+    settings.scale = r.scale; $('sScale').value = r.scale; bindSettings.upd(); refreshNotes(true); renderCalib();
+    toast('Taratura applicata: ' + scaleName(r.scale));
+  });
+  $('btnCalibReset').addEventListener('click', e => {
+    const b = e.currentTarget;
+    if (!b.classList.contains('confirm')) { b.classList.add('confirm'); b.textContent = 'Conferma azzeramento'; return; }
+    b.classList.remove('confirm'); b.textContent = 'Azzera dati';
+    calib.samples = []; db.put('calib', 'samples', []).catch(() => {}); renderCalib();
+  });
+
+  // ---------- schermo sempre acceso in guida (riserva per iOS: video muto in loop) ----------
+  const nosleep = (() => {
+    let v = null;
+    return {
+      on() {
+        try {
+          if (!v) { v = document.createElement('video'); v.setAttribute('playsinline', ''); v.setAttribute('muted', ''); v.muted = true; v.loop = true; v.src = 'nosleep.mp4'; v.title = 'Copilota'; }
+          const p = v.play(); if (p && p.catch) p.catch(() => {});
+        } catch { /* niente */ }
+      },
+      off() { try { v && v.pause(); } catch { /* niente */ } }
+    };
+  })();
+
   // ---------- impostazioni ----------
   function renderCars() {
     const designed = Cars.MODELS.map(m => `<button class="carbtn ${m.id === settings.car ? 'on' : ''}" data-m="${m.id}"><div class="cv">${Cars.rear(m.id, settings.livery)}</div><span>${m.name}</span></button>`);
@@ -912,6 +1159,8 @@
     const bindRange = (id, key, regen) => { const el = $(id); el.value = settings[key]; el.addEventListener('input', () => { settings[key] = +el.value; upd(); }); if (regen) el.addEventListener('change', refreshNotes); };
     const bindCheck = (id, key, fn) => { const el = $(id); el.checked = settings[key]; el.addEventListener('change', () => { settings[key] = el.checked; upd(); fn && fn(); }); };
     bindRange('sLead', 'lead'); bindRange('sScale', 'scale', true); bindRange('sSim', 'sim');
+    $('sScale').addEventListener('change', () => renderCalib());
+    bindCheck('tLearn', 'learn');
     bindCheck('tFlat', 'flat', refreshNotes); bindCheck('tDist', 'dist', () => cur && renderSheet()); bindCheck('tNav', 'nav', refreshNotes);
     bindCheck('tCams', 'cams', () => { if (settings.cams && !cams.length) loadCameras(); else refreshNotes(); });
     const ms = $('selMap'); ms.value = settings.mapStyle; ms.addEventListener('change', () => { settings.mapStyle = ms.value; upd(); whenReady(setTiles); });
@@ -955,7 +1204,10 @@
   whenReady(() => { drawObstacles(); drawPins(); });
   $('obsCount').textContent = obstacles.length;
   voice.load();
+  calib.load();
   startGeo();
+  const offlineMsg = () => { if (!navigator.onLine) toast('Sei senza connessione: puoi usare le prove salvate', 5000); };
+  window.addEventListener('offline', offlineMsg); offlineMsg();
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
-  window.__copilota = { get cur() { return cur; }, drive, voice, places, setPlace, computeRoute, map, gps, car, settings };
+  window.__copilota = { get cur() { return cur; }, drive, voice, places, setPlace, computeRoute, map, gps, car, settings, stages, calib, editor };
 })();
