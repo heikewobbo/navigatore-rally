@@ -41,7 +41,7 @@
     get(k, d) { try { const v = localStorage.getItem('cr.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem('cr.' + k, JSON.stringify(v)); } catch { /* niente */ } }
   };
-  const settings = Object.assign({ lead: 4.5, scale: 1, flat: true, dist: true, nav: true, cams: true, mapStyle: 'dark', sim: 80, car: 'rally2', livery: 'bianca', view: '3d' }, store.get('settings', {}));
+  const settings = Object.assign({ lead: 4.5, scale: 1, flat: true, dist: true, nav: true, cams: true, mapStyle: 'dark', sim: 80, car: 'rally2', livery: 'bianca', view: '3d', car3d: 'flat' }, store.get('settings', {}));
   if (!TILES[settings.mapStyle]) settings.mapStyle = settings.light ? 'light' : 'dark';
   let obstacles = store.get('obstacles', []);
   let recents = store.get('recents', []);
@@ -204,10 +204,13 @@
   }
   const carInfo = () => customCars.get(settings.car) || null;
   // vista disponibile per l'auto scelta: 'rear' (da dietro), 'flat' (foto dall'alto appoggiata sulla strada), 'top'
+  // in 3D: 'flat' = vista dall'alto appoggiata sulla strada (ruota con l'auto), 'rear' = da dietro
   function carView(want) {
+    if (want !== 'rear') return 'top';
     const c = carInfo();
-    if (want === 'rear') return c ? (c.rear ? 'rear' : c.top ? 'flat' : 'rear') : 'rear';
-    return 'top';
+    const hasTop = !c || !!c.top, hasRear = !c || !!c.rear;
+    if (settings.car3d === 'flat') return hasTop ? 'flat' : 'rear';
+    return hasRear ? 'rear' : 'flat';
   }
   function carHTML(view) {
     const c = carInfo();
@@ -913,6 +916,7 @@
     bindCheck('tCams', 'cams', () => { if (settings.cams && !cams.length) loadCameras(); else refreshNotes(); });
     const ms = $('selMap'); ms.value = settings.mapStyle; ms.addEventListener('change', () => { settings.mapStyle = ms.value; upd(); whenReady(setTiles); });
     const sv = $('selView'); sv.value = settings.view; sv.addEventListener('change', () => { settings.view = sv.value; upd(); });
+    const s3 = $('selCar3d'); s3.value = settings.car3d; s3.addEventListener('change', () => { settings.car3d = s3.value; upd(); car.redraw(); });
     $('carModels').addEventListener('click', e => { const b = e.target.closest('[data-m]'); if (!b) return; settings.car = b.dataset.m; upd(); renderCars(); car.redraw(); });
     $('carLiveries').addEventListener('click', e => { const b = e.target.closest('[data-l]'); if (!b) return; settings.livery = b.dataset.l; upd(); renderCars(); car.redraw(); });
     upd();
