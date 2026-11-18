@@ -94,6 +94,12 @@
       <label class="btn ghost filebtn">Carica voci (.zip)<input id="inVoices" type="file" accept=".zip,application/zip,audio/*" multiple></label>
       <button id="btnTestVoice" class="btn ghost">Prova</button>
     </div>
+    <label class="select">Audio in auto
+      <select id="selAudio">
+        <option value="continuo">Continuo (consigliato con CarPlay)</option>
+        <option value="navigatore">Come un navigatore: abbassa la musica a ogni nota</option>
+      </select></label>
+    <p class="hint">Se con CarPlay la voce si spezza, prova l'altra modalità.</p>
     <details class="cmds">
       <summary>Comandi vocali <span id="cmdMissing" class="muted"></span></summary>
       <p class="hint">Per ogni comando: ▶ per ascoltarlo, File per sostituirlo con un audio tuo, Registra per dirlo tu col microfono. Puoi anche caricare più file audio insieme con "Carica voci": se si chiamano come il comando (es. autovelox.mp3) lo sostituiscono.</p>
