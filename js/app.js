@@ -41,7 +41,7 @@
     get(k, d) { try { const v = localStorage.getItem('cr.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem('cr.' + k, JSON.stringify(v)); } catch { /* niente */ } }
   };
-  const settings = Object.assign({ lead: 4.5, scale: 1, flat: true, dist: true, nav: true, cams: true, mapStyle: 'dark', sim: 80, car: 'rally2', livery: 'bianca', view: '3d', car3d: 'flat', learn: true, audioMode: 'continuo' }, store.get('settings', {}));
+  const settings = Object.assign({ lead: 4.5, scale: 1, flat: true, dist: true, nav: true, cams: true, mapStyle: 'dark', sim: 80, car: 'rally2', livery: 'bianca', view: '3d', car3d: 'flat', learn: true, audioMode: 'continuo', compass: false }, store.get('settings', {}));
   if (!TILES[settings.mapStyle]) settings.mapStyle = settings.light ? 'light' : 'dark';
   let obstacles = store.get('obstacles', []);
   let recents = store.get('recents', []);
@@ -243,6 +243,8 @@
     if (!drive.on) car.update();
   }
   async function startCompass() {
+    if (!settings.compass || startCompass.asked) return;
+    startCompass.asked = true;
     try {
       if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
         if (await DeviceOrientationEvent.requestPermission() !== 'granted') return;
@@ -629,7 +631,7 @@
 
   // ---------- voce ----------
   const voice = (() => {
-    let ctx = null, clips = new Map(), buffers = new Map(), decoding = null, speaking = false, itVoice = null;
+    let clips = new Map(), buffers = new Map(), decoding = null, speaking = false, itVoice = null;
     function pickVoice() { const vs = speechSynthesis.getVoices().filter(v => /^it/i.test(v.lang)); itVoice = vs.find(v => /Alice|Luca|Federica|Paola/i.test(v.name)) || vs[0] || null; }
     if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
     async function load() { try { clips = await db.getAll('clips'); } catch { clips = new Map(); } updateStatus(); }
@@ -660,70 +662,80 @@
       await db.del('clips', variants); await db.put('clips', token, buf);
       variants.forEach(v => { clips.delete(v); buffers.delete(v); });
       clips.set(token, buf);
-      if (ctx) { try { buffers.set(token, trim(await ctx.decodeAudioData(buf.slice(0)))); } catch { buffers.delete(token); } }
+      try { buffers.set(token, trim(await decodeData(buf))); } catch { buffers.delete(token); }
       if (refresh) updateStatus();
     }
     function has(token) { return [token, token + '1', token + '2', token + '_1', token + '_2'].some(c => clips.has(c)); }
     // clip sostitutive della stessa voce per i comandi che mancano
     function aliasOf(token) { const a = ALIASES[token]; return !has(token) && a && a.every(has) ? a : null; }
     const expand = tokens => tokens.flatMap(t => aliasOf(t) || [t]);
-    // tipo di sessione audio: "continuo" tiene l'audio sempre aperto (CarPlay non si riaggancia a ogni nota),
-    // "navigatore" abbassa la musica solo durante la chiamata, come i navigatori
+    // Le clip si decodificano senza aprire l'audio (OfflineAudioContext); ogni chiamata diventa un piccolo WAV
+    // riprodotto da un normale elemento <audio>, che iOS e CarPlay gestiscono come un vocale.
+    // (Web Audio su CarPlay viene ricampionato e va a scatti.)
+    const RATE = 44100;
+    let dec = null, player = null, curUrl = null, unlocked = false;
+    function decoder() { if (!dec) { const O = window.OfflineAudioContext || window.webkitOfflineAudioContext; if (O) dec = new O(1, 1, RATE); } return dec; }
+    function decodeData(buf) {
+      return new Promise((res, rej) => { const d = decoder(); if (!d) return rej(new Error('no audio')); const p = d.decodeAudioData(buf.slice(0), res, rej); if (p && p.then) p.then(res, rej); });
+    }
     function setSession() {
       try { if (navigator.audioSession) navigator.audioSession.type = settings.audioMode === 'navigatore' ? 'transient' : 'playback'; } catch { /* vecchio iOS */ }
     }
+    function wavURL(f32) {
+      const n = f32.length, b = new ArrayBuffer(44 + n * 2), v = new DataView(b);
+      const w = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+      w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+      v.setUint32(24, RATE, true); v.setUint32(28, RATE * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+      for (let i = 0; i < n; i++) { const x = Math.max(-1, Math.min(1, f32[i])); v.setInt16(44 + i * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true); }
+      return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
+    }
+    // va chiamata da un tocco: sblocca l'elemento audio (poi iOS lo lascia suonare da solo)
     function unlock() {
-      if (!ctx) {
-        setSession();
-        const AC = window.AudioContext || window.webkitAudioContext; if (AC) ctx = new AC();
-        // se iOS interrompe l'audio (cambio CarPlay/Bluetooth, telefonata) lo riattiva appena può
-        if (ctx) ctx.onstatechange = () => { if (ctx.state !== 'running' && (drive.on || speaking)) ctx.resume().catch(() => {}); };
+      setSession();
+      if (!player) { player = new Audio(); player.setAttribute('playsinline', ''); player.preload = 'auto'; }
+      if (!unlocked) {
+        player.src = wavURL(new Float32Array(Math.round(RATE * 0.05)));
+        const p = player.play(); if (p && p.then) p.then(() => { unlocked = true; }, () => {}); else unlocked = true;
       }
-      if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});
-      if (ctx) { const b = ctx.createBuffer(1, 1, 22050), s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start(0); }
       if ('speechSynthesis' in window && !unlock.tts) { unlock.tts = true; const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); }
       if (clips.size && !decoding) decoding = decodeAll();
     }
     async function decodeAll() {
       const names = [...clips.keys()];
       for (let i = 0; i < names.length; i += 8) {
-        await Promise.all(names.slice(i, i + 8).map(async n => { try { buffers.set(n, trim(await ctx.decodeAudioData(clips.get(n).slice(0)))); } catch { /* userà la sintesi */ } }));
+        await Promise.all(names.slice(i, i + 8).map(async n => { try { buffers.set(n, trim(await decodeData(clips.get(n)))); } catch { /* userà la sintesi */ } }));
       }
     }
+    // toglie il silenzio iniziale/finale; restituisce i campioni (mono, 44,1 kHz)
     function trim(buf) {
-      const d = buf.getChannelData(0), th = 0.02, pad = Math.floor(buf.sampleRate * 0.015);
+      const d = buf.getChannelData(0), th = 0.02, pad = Math.floor(RATE * 0.015);
       let a = 0, b = d.length - 1;
       while (a < b && Math.abs(d[a]) < th) a++;
       while (b > a && Math.abs(d[b]) < th) b--;
       a = Math.max(0, a - pad); b = Math.min(d.length - 1, b + pad);
-      if (b - a < 100) return buf;
-      const out = ctx.createBuffer(buf.numberOfChannels, b - a + 1, buf.sampleRate);
-      for (let c = 0; c < buf.numberOfChannels; c++) out.copyToChannel(buf.getChannelData(c).subarray(a, b + 1), c);
-      return out;
+      return b - a < 100 ? d.slice() : d.slice(a, b + 1);
     }
     function resolve(tok) {
       const t = tok.toLowerCase();
       const cands = [t, t + '1', t + '2', t + '_1', t + '_2'].filter(c => buffers.has(c));
       return cands.length ? buffers.get(cands[Math.floor(Math.random() * cands.length)]) : null;
     }
-    function playBuffer(buf) { return new Promise(res => { const s = ctx.createBufferSource(); s.buffer = buf; s.connect(ctx.destination); s.onended = res; s.start(); setTimeout(res, buf.duration * 1000 + 400); }); }
-    // unisce le clip di una chiamata in un unico suono: una sola partenza invece di tante (meno scatti su CarPlay)
-    function joinBuffers(list) {
-      const sr = ctx.sampleRate, gap = Math.round(sr * 0.03);
-      const len = list.reduce((a, b) => a + b.length, 0) + gap * (list.length - 1);
-      const out = ctx.createBuffer(1, len, sr), d = out.getChannelData(0);
-      let o = 0;
-      for (const b of list) { d.set(b.getChannelData(0), o); o += b.length + gap; }
+    // unisce le clip di una chiamata in un unico suono
+    function join(list) {
+      const gap = Math.round(RATE * 0.03), out = new Float32Array(list.reduce((a, b) => a + b.length, 0) + gap * (list.length - 1));
+      let o = 0; for (const b of list) { out.set(b, o); o += b.length + gap; }
       return out;
     }
-    // audio sempre aperto durante la guida: un suono inudibile in loop
-    let keep = null;
-    function keepAlive(on) {
-      if (on && settings.audioMode === 'continuo' && ctx && !keep) {
-        const b = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate), d = b.getChannelData(0);
-        for (let i = 0; i < d.length; i++) d[i] = (Math.random() - 0.5) * 2e-5;
-        keep = ctx.createBufferSource(); keep.buffer = b; keep.loop = true; keep.connect(ctx.destination); keep.start();
-      } else if (!on && keep) { try { keep.stop(); } catch { /* già fermo */ } keep = null; }
+    function playPCM(f32) {
+      return new Promise(res => {
+        let done = false; const fin = () => { if (!done) { done = true; res(); } };
+        if (curUrl) URL.revokeObjectURL(curUrl);
+        curUrl = wavURL(f32);
+        player.onended = fin; player.onerror = fin;
+        player.src = curUrl;
+        const p = player.play(); if (p && p.catch) p.catch(fin);
+        setTimeout(fin, f32.length / RATE * 1000 + 1500);
+      });
     }
     function tts(text) {
       return new Promise(res => {
@@ -738,18 +750,17 @@
       speaking = true;
       try {
         if (decoding) await decoding;
-        if (!(ctx && buffers.size)) { await tts(tokens.map(P.tokenText).join(' ')); return; }
+        if (!(player && buffers.size)) { await tts(tokens.map(P.tokenText).join(' ')); return; }
         setSession();
-        if (ctx.state !== 'running') await Promise.race([ctx.resume().catch(() => {}), new Promise(r => setTimeout(r, 400))]);
         tokens = expand(tokens);
-        // le clip consecutive vanno in un unico suono; le parole senza clip le legge la sintesi
         let pend = [], run = [];
         const flushTts = async () => { if (pend.length) { await tts(pend.join(' ')); pend = []; } };
-        const flushRun = async () => { if (run.length) { await playBuffer(run.length > 1 ? joinBuffers(run) : run[0]); run = []; } };
+        const flushRun = async () => { if (run.length) { await playPCM(join(run)); run = []; } };
         for (const t of tokens) { const b = resolve(t); if (b) { await flushTts(); run.push(b); } else { await flushRun(); pend.push(P.tokenText(t)); } }
         await flushRun(); await flushTts();
       } finally { speaking = false; }
     }
+    const keepAlive = () => {}; // non più usato: l'audio continuo peggiorava CarPlay
     return { load, importFiles, setClip, has, aliasOf, unlock, say, keepAlive, setSession, get speaking() { return speaking; }, get count() { return clips.size; }, get decoded() { return buffers.size; } };
   })();
 
@@ -804,7 +815,7 @@
     cam: { bearing: 0, zoom: 17, t: 0 }, lastHeading: 0,
     start(sim) {
       if (!cur) return;
-      voice.unlock(); startCompass();
+      voice.unlock();
       this.on = true; this.sim = sim; this.idx = 0; this.fix = null; this.off = 0; this.said = -1; this.follow = true;
       document.body.classList.add('driving');
       $('drive').hidden = false; $('dbar').hidden = false; $('btnLocate').classList.remove('attn');
@@ -1196,6 +1207,7 @@
     const ms = $('selMap'); ms.value = settings.mapStyle; ms.addEventListener('change', () => { settings.mapStyle = ms.value; upd(); whenReady(setTiles); });
     const sv = $('selView'); sv.value = settings.view; sv.addEventListener('change', () => { settings.view = sv.value; upd(); });
     const am = $('selAudio'); am.value = settings.audioMode; am.addEventListener('change', () => { settings.audioMode = am.value; upd(); voice.setSession(); if (drive.on) { voice.keepAlive(false); voice.keepAlive(true); } });
+    bindCheck('tCompass', 'compass', () => { if (settings.compass) startCompass(); });
     const s3 = $('selCar3d'); s3.value = settings.car3d; s3.addEventListener('change', () => { settings.car3d = s3.value; upd(); car.redraw(); });
     $('carModels').addEventListener('click', e => { const b = e.target.closest('[data-m]'); if (!b) return; settings.car = b.dataset.m; upd(); renderCars(); car.redraw(); });
     $('carLiveries').addEventListener('click', e => { const b = e.target.closest('[data-l]'); if (!b) return; settings.livery = b.dataset.l; upd(); renderCars(); car.redraw(); });
