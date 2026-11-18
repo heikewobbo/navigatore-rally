@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;800&family=Barlow:wght@400;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="vendor/maplibre/maplibre-gl.css">
 <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
@@ -90,6 +90,22 @@
       <label class="btn ghost filebtn">Carica voci (.zip)<input id="inVoices" type="file" accept=".zip,application/zip,audio/*" multiple></label>
       <button id="btnTestVoice" class="btn ghost">Prova</button>
     </div>
+    <details class="cmds">
+      <summary>Comandi vocali <span id="cmdMissing" class="muted"></span></summary>
+      <p class="hint">Per ogni comando: ▶ per ascoltarlo, File per sostituirlo con un audio tuo, Registra per dirlo tu col microfono. Puoi anche caricare più file audio insieme con "Carica voci": se si chiamano come il comando (es. autovelox.mp3) lo sostituiscono.</p>
+      <div id="cmdList"></div>
+    </details>
+
+    <h3>La tua auto</h3>
+    <div id="carModels" class="cars"></div>
+    <div id="carLiveries" class="swatches"></div>
+    <div class="row"><label class="btn ghost filebtn">Carica foto auto (.zip)<input id="inCars" type="file" accept=".zip,application/zip,image/*" multiple></label></div>
+    <p class="hint">Le foto restano solo su questo telefono. Nomi dei file: <b>Nome__top.png</b> (dall'alto, muso in su) e <b>Nome__rear.png</b> (da dietro).</p>
+    <label class="select">Vista in guida
+      <select id="selView">
+        <option value="3d">3D, da dietro l'auto</option>
+        <option value="2d">2D dall'alto, direzione in su</option>
+      </select></label>
 
     <h3>Chiamate</h3>
     <label class="slider">Anticipo <output id="oLead">4,5 s</output>
@@ -125,9 +141,10 @@
 
 <div id="toast" class="toast" hidden></div>
 
-<script src="vendor/leaflet/leaflet.js"></script>
+<script src="vendor/maplibre/maplibre-gl.js"></script>
 <script src="vendor/jszip.min.js"></script>
 <script src="js/pacenotes.js"></script>
+<script src="js/cars.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 // Service worker: tiene in cache l'app (non le mappe), così si apre anche con poco segnale
-const CACHE = 'copilota-v2';
-const FILES = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/pacenotes.js', 'vendor/leaflet/leaflet.js', 'vendor/leaflet/leaflet.css', 'vendor/jszip.min.js', 'manifest.webmanifest', 'icon-192.png'];
+const CACHE = 'copilota-v3';
+const FILES = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/pacenotes.js', 'vendor/maplibre/maplibre-gl.js', 'vendor/maplibre/maplibre-gl.css', 'js/cars.js', 'vendor/jszip.min.js', 'manifest.webmanifest', 'icon-192.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))); self.clients.claim(); });
 self.addEventListener('fetch', e => {

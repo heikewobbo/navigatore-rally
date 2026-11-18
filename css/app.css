@@ -17,10 +17,12 @@ LAYOUT: mappa sotto, ricerca in alto, foglio note in basso; in guida cartello in
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:16px/1.45 Barlow,system-ui,-apple-system,sans-serif;overflow:hidden}
 button,input{font:inherit;color:inherit}
 #map{position:fixed;inset:0;background:#0d0f12}
-.leaflet-container{background:#0d0f12;font:inherit}
-.leaflet-control-attribution{background:rgba(17,19,23,.7)!important;color:#8a8f99!important;font-size:10px}
-.leaflet-control-attribution a{color:#b9bec8!important}
-.leaflet-control-zoom{display:none}
+.maplibregl-map{font:inherit}
+.maplibregl-ctrl-attrib{background:rgba(17,19,23,.75)!important;color:#8a8f99!important;font-size:10px}
+.maplibregl-ctrl-attrib a{color:#b9bec8!important}
+.maplibregl-ctrl-attrib-button{filter:invert(1)}
+.maplibregl-ctrl-bottom-right{bottom:calc(var(--safe-b) + 4px)}
+body.driving .maplibregl-ctrl-bottom-right{bottom:calc(var(--safe-b) + 80px)}
 
 /* ricerca */
 .plan{position:fixed;left:10px;right:10px;top:calc(var(--safe-t) + 10px);z-index:1000;max-width:560px;margin:0 auto}
@@ -101,12 +103,14 @@ body.driving .locate{top:auto;bottom:calc(var(--safe-b) + 92px)}
 
 /* marker mappa */
 .nlabel{background:transparent;border:0}
-.nlabel span{display:inline-block;transform:translate(-50%,-50%);padding:1px 6px;border-radius:6px;font:800 13px/1.3 'Barlow Condensed',sans-serif;color:#111;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.6)}
-.obsicon span{display:grid;place-items:center;width:28px;height:28px;transform:translate(-50%,-50%);border-radius:50%;background:#fff;border:3px solid var(--stop);font:800 15px/1 'Barlow Condensed',sans-serif;color:#111}
-.me span{display:block;width:22px;height:22px;transform:translate(-50%,-50%);border-radius:50%;background:var(--yel);border:4px solid #111;box-shadow:0 0 0 6px rgba(255,212,0,.25)}
-.pin span{display:block;width:18px;height:18px;transform:translate(-50%,-50%) rotate(45deg);border-radius:4px;border:3px solid #111}
-.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--panel);color:var(--ink);border:1px solid var(--line)}
-.leaflet-popup-content{margin:12px;min-width:200px}
+.nlabel{display:none}
+#map.show-labels .nlabel,body.driving .nlabel.near{display:block}
+body.driving #map .nlabel:not(.near){display:none}
+.nlabel span{display:inline-block;padding:1px 6px;border-radius:6px;font:800 13px/1.3 'Barlow Condensed',sans-serif;color:#111;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.6)}
+.obsicon{cursor:pointer}.obsicon span{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#fff;border:3px solid var(--stop);font:800 15px/1 'Barlow Condensed',sans-serif;color:#111}
+.pin span{display:block;width:18px;height:18px;transform:rotate(45deg);border-radius:4px;border:3px solid #111}
+.maplibregl-popup-content{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:14px;padding:12px;min-width:220px;box-shadow:0 10px 30px rgba(0,0,0,.5)}
+.maplibregl-popup-tip{border-top-color:var(--panel)!important;border-bottom-color:var(--panel)!important}
 .pop h4{margin:0 0 8px;font:600 15px Barlow,sans-serif;color:var(--mute)}
 .pop .pb{display:block;width:100%;text-align:left;margin:6px 0;background:var(--panel2);border:1px solid var(--line);border-radius:10px;min-height:44px;padding:0 12px;cursor:pointer;font-size:16px}
 .pop .grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
@@ -127,9 +131,39 @@ body.driving .locate{top:auto;bottom:calc(var(--safe-b) + 92px)}
 .slider{display:grid;grid-template-columns:1fr auto;gap:2px 10px;margin:12px 0 4px}
 .slider output{color:var(--yel);font-weight:600}
 .slider input{grid-column:1/-1;width:100%;accent-color:var(--yel);height:32px}
-.dark-tiles .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.55)}
 .select{display:grid;gap:6px;margin:10px 0}
 .select select{height:48px;border-radius:12px;background:var(--panel2);color:var(--ink);border:1px solid var(--line);padding:0 12px;font-size:16px}
+/* auto */
+.carmk{pointer-events:none;filter:drop-shadow(0 3px 4px rgba(0,0,0,.45))}
+.carmk.top,.carmk.flat{width:30px}
+.carmk.top.photo{width:34px}
+.carmk.flat{width:52px}
+.carmk.rear{width:118px}
+.carmk .car{display:block;width:100%;height:auto}
+.locate.attn{border-color:var(--yel);box-shadow:0 0 0 3px rgba(255,212,0,.35)}
+.cars{display:grid;grid-template-columns:repeat(auto-fill,minmax(98px,1fr));gap:8px}
+.carbtn{background:var(--panel2);border:2px solid var(--line);border-radius:14px;padding:8px 6px 6px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:4px;min-height:44px}
+.carbtn.on{border-color:var(--yel)}
+.carbtn .cv{width:100%;height:58px;display:grid;place-items:center}
+.carbtn .cv svg,.carbtn .cv img{max-width:100%;max-height:58px}
+.carbtn span{font:600 15px/1.1 'Barlow Condensed',sans-serif;text-align:center}
+.swatches{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
+.sw{width:44px;height:44px;border-radius:50%;border:3px solid var(--line);background:linear-gradient(135deg,var(--a) 0 60%,var(--b) 60% 100%);cursor:pointer}
+.sw.on{border-color:var(--yel)}
+/* comandi vocali */
+.cmds{margin:12px 0;border:1px solid var(--line);border-radius:14px;padding:4px 12px}
+.cmds summary{min-height:44px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;cursor:pointer;font-weight:600}
+.cmds summary .muted{font-weight:400;font-size:14px}
+.cmdgroup h4{margin:14px 0 4px;color:var(--mute);font:600 15px Barlow,sans-serif}
+.cmd{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto auto;gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid var(--line)}
+.cn{font:600 17px/1.2 'Barlow Condensed',sans-serif}
+.cs{font-size:12px;border-radius:999px;padding:2px 8px}
+.cmd.ok .cs{background:#16351f;color:#7ee2a0}
+.cmd.miss .cs{background:#3a2a10;color:#ffc163}
+.cb{min-width:44px;height:40px;border-radius:10px;border:1px solid var(--line);background:var(--panel2);display:inline-grid;place-items:center;font-size:14px;cursor:pointer;position:relative;overflow:hidden;padding:0 8px}
+.cb input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.cb.rec.on{background:var(--stop);border-color:var(--stop);color:#fff}
+@media(max-width:420px){.cmd{grid-template-columns:minmax(0,1fr) auto auto auto}.cs{display:none}}
 .toggle{display:flex;align-items:center;gap:12px;min-height:44px;cursor:pointer}
 .toggle input{width:22px;height:22px;accent-color:var(--yel)}
 
