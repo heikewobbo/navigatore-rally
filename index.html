@@ -103,7 +103,13 @@
     <label class="toggle"><input id="tCams" type="checkbox" checked><span>Autovelox da OpenStreetMap</span></label>
 
     <h3>Mappa e simulazione</h3>
-    <label class="toggle"><input id="tLight" type="checkbox"><span>Mappa chiara</span></label>
+    <label class="select">Mappa
+      <select id="selMap">
+        <option value="dark">Stradale scura</option>
+        <option value="light">Stradale chiara</option>
+        <option value="topo">Topografica (montagna)</option>
+        <option value="sat">Satellite</option>
+      </select></label>
     <label class="slider">Velocità simulazione <output id="oSim">80 km/h</output>
       <input id="sSim" type="range" min="30" max="140" step="10" value="80"></label>
 

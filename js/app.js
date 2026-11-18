@@ -10,18 +10,22 @@
   const PHOTON_REV = 'https://photon.komoot.io/reverse';
   const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
   const OVERPASS = 'https://overpass-api.de/api/interpreter';
+  // mappe gratuite senza chiave; "scura" = OpenStreetMap con i colori invertiti
+  const OSM_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · OSRM · Photon';
   const TILES = {
-    dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    light: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png'
+    dark: { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', max: 19, attr: OSM_ATTR, invert: true },
+    light: { url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', max: 19, attr: OSM_ATTR },
+    topo: { url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', max: 17, attr: OSM_ATTR + ' · &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)', sub: 'abc' },
+    sat: { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', max: 19, attr: 'Immagini &copy; Esri, Maxar, Earthstar Geographics · OSRM · Photon' }
   };
-  const ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a> · OSRM · Photon';
 
   // ---------- memoria locale ----------
   const store = {
     get(k, d) { try { const v = localStorage.getItem('cr.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem('cr.' + k, JSON.stringify(v)); } catch { /* niente */ } }
   };
-  const settings = Object.assign({ lead: 4.5, scale: 1, flat: true, dist: true, nav: true, cams: true, light: false, sim: 80 }, store.get('settings', {}));
+  const settings = Object.assign({ lead: 4.5, scale: 1, flat: true, dist: true, nav: true, cams: true, mapStyle: 'dark', sim: 80 }, store.get('settings', {}));
+  if (!TILES[settings.mapStyle]) settings.mapStyle = settings.light ? 'light' : 'dark';
   let obstacles = store.get('obstacles', []);
   let recents = store.get('recents', []);
 
@@ -65,7 +69,14 @@
 
   // ---------- mappa ----------
   const map = L.map('map', { zoomControl: false, attributionControl: true }).setView(store.get('view', [45.0, 7.68]), store.get('zoom', 12));
-  let tiles = L.tileLayer(settings.light ? TILES.light : TILES.dark, { maxZoom: 19, attribution: ATTR, subdomains: 'abcd' }).addTo(map);
+  let tiles = null;
+  function setTiles() {
+    if (tiles) map.removeLayer(tiles);
+    const t = TILES[settings.mapStyle] || TILES.dark;
+    tiles = L.tileLayer(t.url, { maxZoom: 19, maxNativeZoom: t.max, attribution: t.attr, subdomains: t.sub || 'abc', crossOrigin: false }).addTo(map);
+    document.body.classList.toggle('dark-tiles', !!t.invert);
+  }
+  setTiles();
   map.on('moveend', () => { store.set('view', [map.getCenter().lat, map.getCenter().lng]); store.set('zoom', map.getZoom()); });
   const layers = { alts: L.layerGroup().addTo(map), route: L.layerGroup().addTo(map), labels: L.layerGroup(), obs: L.layerGroup().addTo(map), pins: L.layerGroup().addTo(map) };
   let meMarker = null;
@@ -707,7 +718,7 @@
     bindRange('sLead', 'lead'); bindRange('sScale', 'scale', true); bindRange('sSim', 'sim');
     bindCheck('tFlat', 'flat', refreshNotes); bindCheck('tDist', 'dist', () => cur && renderSheet()); bindCheck('tNav', 'nav', refreshNotes);
     bindCheck('tCams', 'cams', () => { if (settings.cams && !cams.length) loadCameras(); else refreshNotes(); });
-    bindCheck('tLight', 'light', () => { map.removeLayer(tiles); tiles = L.tileLayer(settings.light ? TILES.light : TILES.dark, { maxZoom: 19, attribution: ATTR, subdomains: 'abcd' }).addTo(map); });
+    const ms = $('selMap'); ms.value = settings.mapStyle; ms.addEventListener('change', () => { settings.mapStyle = ms.value; upd(); setTiles(); });
     upd();
   }
   $('btnSettings').addEventListener('click', () => { $('settings').hidden = false; });
