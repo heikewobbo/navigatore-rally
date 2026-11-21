@@ -67,6 +67,7 @@
 
 <!-- Guida -->
 <section id="drive" class="drive" hidden>
+  <div class="navbar" id="navBar" hidden><div class="nvicon" id="nvIcon"></div><b id="nvDist"></b><span id="nvText"></span></div>
   <div class="callcard" id="callCard">
     <div class="cicon" id="dIcon"></div>
     <div class="cbody">
@@ -77,8 +78,9 @@
   <div class="nextrow" id="dNext"></div>
 </section>
 <section id="dbar" class="dbar" hidden>
-  <div class="spd"><b id="dSpd">0</b><span>km/h</span></div>
-  <div class="rem"><b id="dRem">–</b><span id="dMode">GPS</span></div>
+  <div class="spd" id="dSpdBox"><b id="dSpd">0</b><span>km/h</span></div>
+  <div class="limit" id="dLimit" hidden><span id="dLimitV"></span></div>
+  <div class="rem"><b id="dRem">–</b><span><span id="dEta"></span><span id="dMode"></span></span></div>
   <button id="btnRepeat" class="btn ghost small">Ripeti</button>
   <button id="btnStop" class="btn stop small">Stop</button>
 </section>
@@ -130,7 +132,7 @@
     <label class="toggle"><input id="tFlat" type="checkbox" checked><span>Chiama le "piena"</span></label>
     <label class="toggle"><input id="tDist" type="checkbox" checked><span>Chiama le distanze</span></label>
     <label class="toggle"><input id="tNav" type="checkbox" checked><span>Indicazioni a incroci e rotonde</span></label>
-    <label class="toggle"><input id="tCams" type="checkbox" checked><span>Autovelox da OpenStreetMap</span></label>
+    <label class="toggle"><input id="tCams" type="checkbox" checked><span>Autovelox e tutor (tutto il Piemonte, anche senza campo)</span></label>
 
     <h3>Taratura sul tuo stile</h3>
     <label class="toggle"><input id="tLearn" type="checkbox" checked><span>Registra la velocità in curva mentre guidi</span></label>

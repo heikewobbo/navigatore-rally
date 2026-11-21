@@ -102,6 +102,23 @@ body.driving .locate{top:auto;bottom:calc(var(--safe-b) + 92px)}
 .dbar .rem b{font-size:26px}
 .dbar span{color:var(--mute);font-size:13px;margin-top:3px}
 .dbar .rem{margin-right:auto}
+.dbar .spd.over b{color:var(--stop)}
+.dbar .spd,.dbar .limit,.dbar .btn{flex:none}
+.dbar .spd{min-width:44px}
+.dbar .btn.small{padding:0 12px}
+.dbar{gap:10px}
+.dbar .rem{min-width:0;flex:1 1 auto}
+.dbar .rem b{white-space:nowrap}
+.dbar .rem>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.limit{width:48px;height:48px;border-radius:50%;background:#fff;border:5px solid #e3262f;display:grid;place-items:center;flex:none}
+.limit span{font:800 20px/1 'Barlow Condensed',sans-serif;color:#111}
+.navbar{display:flex;align-items:center;gap:10px;background:#1f7a3a;color:#fff;border-radius:16px;padding:8px 14px 8px 8px;margin-bottom:8px;box-shadow:0 8px 24px rgba(0,0,0,.45);min-height:58px}
+.navbar[hidden]{display:none}
+.nvicon{width:42px;height:42px;flex:none}
+.nvicon svg{width:100%;height:100%}
+.navbar b{font:800 26px/1 'Barlow Condensed',sans-serif;white-space:nowrap;flex:none}
+.navbar span{flex:1 1 0;font:600 17px/1.15 Barlow,sans-serif;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.navbar em{font-style:normal;color:#ffe46b}
 
 /* marker mappa */
 .nlabel{background:transparent;border:0}

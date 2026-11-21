@@ -26,13 +26,13 @@
     ['Dettagli curva', ['lunga', 'molto_lunga', 'stringe', 'apre', 'secca', 'e', 'incrocio']],
     ['Distanze', ['30', '40', '50', '60', '70', '80', '100', '120', '140', '150', '160', '180', '200', '250', '300', '350', '400', '450', '500', '600', '700', '800', '900', '1000']],
     ['Indicazioni', ['stai_destra', 'stai_sinistra', 'rotonda', 'prima_uscita', 'seconda_uscita', 'terza_uscita', 'quarta_uscita', 'quinta_uscita', 'sesta_uscita', 'ricalcolo', 'fine']],
-    ['Ostacoli', ['attento', 'attento_attento', 'autovelox', 'buca', 'dosso', 'scivola', 'ponte', 'lavori']]
+    ['Ostacoli', ['attento', 'attento_attento', 'autovelox', 'tutor', 'buca', 'dosso', 'scivola', 'ponte', 'lavori']]
   ];
   const EXITS = ['prima_uscita', 'seconda_uscita', 'terza_uscita', 'quarta_uscita', 'quinta_uscita', 'sesta_uscita'];
   // comandi che il pacchetto non ha: si usano parole già registrate dalla stessa voce
   // (se un giorno carichi la registrazione vera del comando, vale quella)
   const ALIASES = {
-    autovelox: ['occhio'], lavori: ['attento', 'stretta'], ricalcolo: ['aspetta'], rotonda: ['gira'],
+    autovelox: ['occhio'], tutor: ['occhio'], lavori: ['attento', 'stretta'], ricalcolo: ['aspetta'], rotonda: ['gira'],
     prima_uscita: ['_uno'], seconda_uscita: ['_due'], terza_uscita: ['_tre'], quarta_uscita: ['_quattro'], quinta_uscita: ['_cinque'], sesta_uscita: ['_sei']
   };
 
@@ -398,6 +398,7 @@
   // ---------- tocco sulla mappa: partenza, arrivo, ostacolo ----------
   const OBS = {
     autovelox: { label: 'Autovelox', ch: 'V', tokens: ['autovelox'] },
+    tutor: { label: 'Tutor', ch: 'TU', tokens: ['tutor'] },
     buca: { label: 'Buca', ch: 'B', tokens: ['buca'] },
     acqua: { label: 'Acqua / scivola', ch: 'A', tokens: ['scivola'] },
     dosso: { label: 'Dosso', ch: 'D', tokens: ['dosso'] },
@@ -465,6 +466,7 @@
       let u = base;
       if (useBearing && heading != null) u += `&bearings=${Math.round((heading % 360 + 360) % 360)},60;`;
       if (useExclude) u += '&exclude=motorway';
+      try { const r = await fetch(u + '&annotations=maxspeed'); if (r.ok) { const j = await r.json(); if (j.code === 'Ok') return j; } } catch { /* riprova senza */ }
       return (await fetch(u)).json();
     };
     try {
@@ -492,6 +494,8 @@
     const osrm = routes[i], coords = osrm.geometry.coordinates;
     cur = { gen: P.generate(coords, genOptions()), osrm, coords, stage: null, stageName: '', edited: false };
     cur.base = computeBase();
+    cur.man = buildManeuvers(osrm, cur.gen.route);
+    cur.limits = buildLimits(osrm);
     buildNotes(); drawRoute(fit); renderSheet();
   }
   function genOptions() { return { scale: settings.scale, callFlat: settings.flat }; }
@@ -571,11 +575,11 @@
   function buildNotes() {
     const route = cur.gen.route;
     const notes = cur.base.map(n => Object.assign({}, n, n.mods ? { mods: n.mods.slice() } : {}, n.tokens ? { tokens: n.tokens.slice() } : {}));
-    const obsList = obstacles.map(o => ({ ...o })).concat(settings.cams ? cams.map(c => ({ ...c, type: 'autovelox' })) : []);
+    const obsList = obstacles.map(o => ({ ...o })).concat(settings.cams ? cams.map(c => ({ ...c, type: c.type || 'autovelox' })) : []);
     for (const o of obsList) {
       const pr = projectOnRoute(o.lat, o.lon, route);
       if (pr.d > 25) continue;
-      notes.push({ kind: 'obs', obsType: o.type, label: OBS[o.type].label, startS: Math.max(0, pr.s - 10), endS: pr.s, tokens: OBS[o.type].tokens.slice() });
+      notes.push({ kind: 'obs', obsType: o.type, label: OBS[o.type].label + (o.max ? ' ' + o.max : ''), startS: Math.max(0, pr.s - 10), endS: pr.s, tokens: OBS[o.type].tokens.slice() });
     }
     notes.sort((x, y) => x.startS - y.startS);
     P.linkDistances(notes, route.length, cur.gen.cfg);
@@ -638,16 +642,117 @@
   function callTokensFiltered(c) { return settings.dist ? c.tokens : c.tokens.filter(t => !/^\d+$/.test(t)); }
 
   // ---------- autovelox da OpenStreetMap ----------
+  // autovelox e tutor: tutto il Piemonte in una volta (tenuto 7 giorni, funziona anche senza campo);
+  // fuori dal Piemonte si aggiungono quelli intorno al percorso
+  const PIEMONTE = { s: 44.06, n: 46.47, w: 6.62, e: 9.22 };
+  function parseEnforcement(j) {
+    const nodes = {}, list = [], seen = new Set();
+    for (const e of j.elements || []) if (e.type === 'node') nodes[e.id] = e;
+    for (const e of j.elements || []) if (e.type === 'node' && e.tags && e.tags.highway === 'speed_camera') { seen.add(e.id); list.push({ lat: e.lat, lon: e.lon, type: 'autovelox', max: parseInt(e.tags.maxspeed) || null }); }
+    for (const e of j.elements || []) {
+      if (e.type !== 'relation' || !e.tags) continue;
+      const avg = e.tags.enforcement === 'average_speed';
+      if (!avg && e.tags.enforcement !== 'maxspeed') continue;
+      for (const m of e.members || []) {
+        const nd = nodes[m.ref];
+        if (m.type !== 'node' || !nd || seen.has(m.ref)) continue;
+        if (m.role === 'device' || (avg && m.role === 'from')) { seen.add(m.ref); list.push({ lat: nd.lat, lon: nd.lon, type: avg ? 'tutor' : 'autovelox', max: parseInt(e.tags.maxspeed) || null }); }
+      }
+    }
+    return list;
+  }
+  async function overpass(q) {
+    const r = await fetch(OVERPASS, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+    return parseEnforcement(await r.json());
+  }
+  let camsRegion = store.get('camsPiemonte', null);
   async function loadCameras() {
-    if (!cur || cur.gen.route.length > 400000) return;
+    if (!cur) return;
+    let list = camsRegion ? camsRegion.list.slice() : [];
+    if (!camsRegion || Date.now() - camsRegion.t > 7 * 864e5) {
+      try {
+        const reg = await overpass('[out:json][timeout:90];area["ISO3166-2"="IT-21"]->.a;node["highway"="speed_camera"](area.a)->.c;rel["type"="enforcement"](area.a)->.e;node(r.e)->.m;(.c;.e;.m;);out body;');
+        if (reg.length) { camsRegion = { t: Date.now(), list: reg }; store.set('camsPiemonte', camsRegion); list = reg.slice(); }
+      } catch { /* si usa quello che c'è */ }
+    }
     const [[w, s], [e, n]] = boundsOf(cur.gen.route.latlon), pad = 0.01;
-    const q = `[out:json][timeout:20];node["highway"="speed_camera"](${s - pad},${w - pad},${n + pad},${e + pad});out;`;
-    try {
-      const r = await fetch(OVERPASS, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
-      const j = await r.json();
-      cams = (j.elements || []).map(e => ({ lat: e.lat, lon: e.lon }));
-      if (cams.length) { buildNotes(); drawRoute(false); renderSheet(); if (drive.on) drive.resync(); }
-    } catch { /* autovelox non disponibili */ }
+    const outside = s < PIEMONTE.s || n > PIEMONTE.n || w < PIEMONTE.w || e > PIEMONTE.e;
+    if (outside && cur.gen.route.length < 400000) {
+      try {
+        const bb = `${s - pad},${w - pad},${n + pad},${e + pad}`;
+        list = list.concat(await overpass(`[out:json][timeout:25];(node["highway"="speed_camera"](${bb});rel["type"="enforcement"](${bb});)->.x;node(r.x)->.m;(.x;.m;);out body;`));
+      } catch { /* niente */ }
+    }
+    const key = c => c.lat.toFixed(5) + ',' + c.lon.toFixed(5);
+    const uniq = new Map(); for (const c of list) if (!uniq.has(key(c))) uniq.set(key(c), c);
+    cams = [...uniq.values()];
+    if (cams.length) { buildNotes(); drawRoute(false); renderSheet(); if (drive.on) drive.resync(); }
+  }
+
+  // ---------- indicazioni stradali e limiti (come un navigatore) ----------
+  const DIRW = { left: 'a sinistra', right: 'a destra', 'slight left': 'leggermente a sinistra', 'slight right': 'leggermente a destra', 'sharp left': 'tutto a sinistra', 'sharp right': 'tutto a destra', straight: 'dritto' };
+  const ORD = ['', 'prima', 'seconda', 'terza', 'quarta', 'quinta', 'sesta', 'settima', 'ottava'];
+  const sideW = m => (m || '').includes('left') ? 'sinistra' : 'destra';
+  function instrText(m, final) {
+    const mod = m.modifier || 'straight', d = DIRW[mod] || '';
+    switch (m.type) {
+      case 'arrive': return final ? 'arrivo a destinazione' : 'arrivo alla tappa';
+      case 'merge': return 'immettiti a ' + sideW(mod);
+      case 'on ramp': return 'prendi la rampa' + (mod !== 'straight' && d ? ' ' + d : '');
+      case 'off ramp': return "prendi l'uscita a " + sideW(mod);
+      case 'fork': return 'al bivio tieni la ' + sideW(mod);
+      case 'roundabout': case 'rotary': return m.exit ? `alla rotonda prendi la ${ORD[m.exit] || m.exit + 'ª'} uscita` : 'entra nella rotonda';
+      case 'roundabout turn': return 'alla rotonda svolta ' + d;
+      case 'end of road': return mod === 'uturn' ? 'fai inversione a U' : 'alla fine della strada svolta a ' + sideW(mod);
+      default:
+        if (mod === 'uturn') return 'fai inversione a U';
+        if (mod === 'straight') return 'prosegui dritto';
+        if ((m.type === 'continue' || m.type === 'new name') && mod.startsWith('slight')) return 'tieni la ' + sideW(mod);
+        return 'svolta ' + d;
+    }
+  }
+  function buildManeuvers(osrm, route) {
+    const out = []; if (!osrm.legs) return out;
+    let lastI = 0;
+    osrm.legs.forEach((leg, li) => (leg.steps || []).forEach(st => {
+      const m = st.maneuver, t = m.type, mod = m.modifier || 'straight';
+      if (t === 'depart' || t === 'exit roundabout' || t === 'exit rotary') return;
+      if (['new name', 'continue', 'notification', 'use lane'].includes(t) && (!m.modifier || mod === 'straight')) return;
+      const pr = projectOnRoute(m.location[1], m.location[0], route, lastI - 5, lastI + 4000);
+      if (pr.d > 60) return;
+      lastI = pr.i;
+      out.push({ s: pr.s, type: t, mod, exit: m.exit || 0, text: instrText(m, li === osrm.legs.length - 1), name: t === 'arrive' ? '' : (st.name || st.ref || '') });
+    }));
+    return out;
+  }
+  // limiti di velocità di OpenStreetMap lungo il percorso (se il server li fornisce)
+  function buildLimits(osrm) {
+    const ms = []; let ok = true;
+    (osrm.legs || []).forEach(l => { const a = l.annotation && l.annotation.maxspeed; if (a) ms.push(...a); else ok = false; });
+    if (!ok || !ms.length) return null;
+    const c = osrm.geometry.coordinates, cum = [0];
+    for (let i = 1; i < c.length; i++) cum.push(cum[i - 1] + distLL([c[i - 1][1], c[i - 1][0]], [c[i][1], c[i][0]]));
+    const v = ms.map(x => !x || x.unknown || x.none || !x.speed ? 0 : (x.unit === 'mph' ? Math.round(x.speed * 1.609) : x.speed));
+    return { cum, v };
+  }
+  function limitAtS(s) {
+    const L = cur && cur.limits; if (!L || !L.v.length) return null;
+    const t = s * (L.cum[L.cum.length - 1] / (cur.gen.route.length || 1));
+    let lo = 0, hi = L.cum.length - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (L.cum[m] <= t) lo = m; else hi = m; }
+    return L.v[Math.min(lo, L.v.length - 1)] || null;
+  }
+  // freccia della manovra (bianca, stile navigatore)
+  function manIcon(m) {
+    if (m.type === 'arrive') return '<svg viewBox="0 0 48 48"><path d="M14 42V8M14 8h20l-4 7 4 7H14" fill="none" stroke="#fff" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/></svg>';
+    if (m.type === 'roundabout' || m.type === 'rotary') return `<svg viewBox="0 0 48 48"><circle cx="24" cy="20" r="9" fill="none" stroke="#fff" stroke-width="4"/><path d="M24 44V29" stroke="#fff" stroke-width="4" stroke-linecap="round"/><text x="24" y="25" text-anchor="middle" font-family="Barlow Condensed,sans-serif" font-weight="800" font-size="12" fill="#fff">${m.exit || ''}</text></svg>`;
+    const ang = { straight: 0, 'slight right': 40, right: 90, 'sharp right': 130, 'slight left': -40, left: -90, 'sharp left': -130, uturn: -180 }[m.mod] || 0;
+    const a = ang * Math.PI / 180, x1 = 24, y1 = 22, L = ang === -180 ? 0 : 14;
+    const ex = x1 + Math.sin(a) * L, ey = y1 - Math.cos(a) * L;
+    const path = ang === -180 ? 'M28 44V18a8 8 0 0 0-16 0v12' : `M24 44V${y1}L${ex.toFixed(1)} ${ey.toFixed(1)}`;
+    const hx = ang === -180 ? 12 : ex, hy = ang === -180 ? 30 : ey, ha = ang === -180 ? Math.PI : a;
+    const p1 = [hx + Math.sin(ha) * 7, hy - Math.cos(ha) * 7], p2 = [hx + Math.sin(ha + 2.3) * 7, hy - Math.cos(ha + 2.3) * 7], p3 = [hx + Math.sin(ha - 2.3) * 7, hy - Math.cos(ha - 2.3) * 7];
+    return `<svg viewBox="0 0 48 48"><path d="${path}" fill="none" stroke="#fff" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/><path d="M${p1.map(v => v.toFixed(1)).join(' ')}L${p2.map(v => v.toFixed(1)).join(' ')}L${p3.map(v => v.toFixed(1)).join(' ')}Z" fill="#fff"/></svg>`;
   }
 
   // ---------- voce ----------
@@ -840,7 +945,7 @@
       this.on = true; this.sim = sim; this.idx = 0; this.fix = null; this.off = 0; this.said = -1; this.follow = true;
       document.body.classList.add('driving');
       $('drive').hidden = false; $('dbar').hidden = false; $('btnLocate').classList.remove('attn');
-      $('dMode').textContent = sim ? 'SIMULAZIONE' : 'GPS';
+      $('dMode').textContent = sim ? ' · sim' : '';
       closePopup();
       this.wake();
       voice.keepAlive(true);
@@ -998,8 +1103,25 @@
         $('callCard').classList.toggle('said', k <= this.said);
       }
       $('dNext').innerHTML = calls.slice(k + 1, k + 3).map(n => `<div>${iconHTML(n.notes[0])}<span>${esc(callShort(n))}</span><small>${Math.round((n.startS - s) / 10) * 10} m</small></div>`).join('');
-      $('dSpd').textContent = this.fix ? Math.round(this.fix.v * 3.6) : 0;
-      $('dRem').textContent = fmtKm(Math.max(0, cur.gen.route.length - s));
+      const kmh = this.fix ? Math.round(this.fix.v * 3.6) : 0;
+      $('dSpd').textContent = kmh;
+      const rem = Math.max(0, cur.gen.route.length - s);
+      $('dRem').textContent = fmtKm(rem);
+      const eta = new Date(Date.now() + (cur.osrm.duration || 0) * rem / (cur.gen.route.length || 1) * 1000);
+      $('dEta').textContent = 'arrivo ' + eta.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+      // limite di velocità del tratto
+      const lim = limitAtS(s);
+      $('dLimit').hidden = !lim; if (lim) $('dLimitV').textContent = lim;
+      $('dSpdBox').classList.toggle('over', !!lim && kmh > lim + 3);
+      // prossima indicazione
+      const nm = cur.man && cur.man.find(m => m.s > s - 5);
+      $('navBar').hidden = !nm;
+      if (nm) {
+        const d = nm.s - s;
+        $('nvIcon').innerHTML = manIcon(nm);
+        $('nvDist').textContent = d < 1000 ? Math.max(0, Math.round(d / 10) * 10) + ' m' : fmtKm(d);
+        $('nvText').innerHTML = esc(nm.text.charAt(0).toUpperCase() + nm.text.slice(1)) + (nm.name ? ` <em>${/rotonda|uscita/.test(nm.text) ? 'verso' : 'in'} ${esc(nm.name)}</em>` : '');
+      }
       for (const m of labelMarkers) m.getElement().classList.toggle('near', m._s > s - 10 && m._s < s + 450);
     }
   };
@@ -1107,6 +1229,7 @@
         id, name, created: old ? old.created : Date.now(), updated: Date.now(),
         from: places.from, to: places.to,
         osrm: { distance: cur.osrm.distance, duration: cur.osrm.duration, geometry: cur.osrm.geometry },
+        man: cur.man || [], limits: cur.limits || null,
         base: cur.base
       };
       try { await db.put('stages', id, rec); } catch { toast('Non sono riuscito a salvare la prova'); return; }
@@ -1119,7 +1242,7 @@
       if (drive.on) drive.stop();
       routes = [st.osrm]; routeIdx = 0;
       const coords = st.osrm.geometry.coordinates;
-      cur = { gen: P.generate(coords, genOptions()), osrm: st.osrm, coords, base: st.base, stage: id, stageName: st.name, edited: true };
+      cur = { gen: P.generate(coords, genOptions()), osrm: st.osrm, coords, base: st.base, stage: id, stageName: st.name, edited: true, man: st.man || [], limits: st.limits || null };
       noteSeq = Math.max(noteSeq, ...st.base.map(n => (n.id || 0) + 1));
       places.from = st.from; places.to = st.to;
       $('inFrom').value = st.from ? st.from.name : ''; $('inTo').value = st.to ? st.to.name : '';

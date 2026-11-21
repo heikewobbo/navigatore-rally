@@ -13,6 +13,8 @@ Scegli partenza e arrivo, l'app calcola il percorso e trasforma la forma della s
 7. **Taratura**: guidando col GPS l'app registra la velocità in ogni curva e propone la taratura adatta al tuo stile (Impostazioni → Taratura sul tuo stile).
 8. Tocca la mappa per segnare ostacoli (buca, dosso, acqua, ponte, lavori, autovelox, pericolo): il copilota li chiama quando ci arrivi.
 
+In guida, oltre alle note: barra verde con la prossima indicazione e il nome della via, limite di velocità del tratto (la velocità diventa rossa se lo superi), orario di arrivo, autovelox e tutor di tutto il Piemonte con il loro limite (tenuti in memoria 7 giorni, anche senza campo).
+
 Il telefono deve restare con lo schermo acceso sul supporto. Se non senti la voce, controlla l'interruttore silenzioso.
 
 ## Da dove vengono i dati

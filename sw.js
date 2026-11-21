@@ -1,5 +1,5 @@
 // Service worker: app disponibile senza rete + mappe e caratteri già visti tenuti in memoria
-const CACHE = 'copilota-v7';
+const CACHE = 'copilota-v8';
 const FILES = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/pacenotes.js', 'js/cars.js', 'vendor/maplibre/maplibre-gl.js', 'vendor/maplibre/maplibre-gl.css', 'vendor/jszip.min.js', 'manifest.webmanifest', 'icon-192.png', 'nosleep.mp4'];
 const TILES = 'copilota-mappe';
 const TILE_HOSTS = /(^|\.)tile\.openstreetmap\.org$|(^|\.)tile\.opentopomap\.org$|^server\.arcgisonline\.com$|^fonts\.(googleapis|gstatic)\.com$/;
