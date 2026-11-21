@@ -41,7 +41,7 @@
     get(k, d) { try { const v = localStorage.getItem('cr.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
     set(k, v) { try { localStorage.setItem('cr.' + k, JSON.stringify(v)); } catch { /* niente */ } }
   };
-  const settings = Object.assign({ lead: 4.5, scale: 1, flat: true, dist: true, nav: true, cams: true, mapStyle: 'dark', sim: 80, car: 'rally2', livery: 'bianca', view: '3d', car3d: 'flat', learn: true, audioMode: 'continuo', compass: false }, store.get('settings', {}));
+  const settings = Object.assign({ lead: 4.5, scale: 1, flat: true, dist: true, nav: true, cams: true, mapStyle: 'dark', sim: 80, car: 'rally2', livery: 'bianca', view: '3d', car3d: 'flat', learn: true, audioMode: 'continuo', compass: false, noMotorway: true }, store.get('settings', {}));
   if (!TILES[settings.mapStyle]) settings.mapStyle = settings.light ? 'light' : 'dark';
   let obstacles = store.get('obstacles', []);
   let recents = store.get('recents', []);
@@ -451,14 +451,31 @@
   // ---------- percorso ----------
   let routes = [], routeIdx = 0, cur = null;
   let cams = [], routeReq = 0;
-  async function computeRoute(fromOverride) {
+  let osrmNoExclude = false;
+  // heading: direzione di marcia (gradi), così il percorso nuovo non parte "all'indietro"
+  async function computeRoute(fromOverride, opts = {}) {
     const a = fromOverride || places.from, b = places.to;
     if (!a || !b) return;
     const my = ++routeReq;
     if (!drive.on) toast('Calcolo il percorso…', 0, true);
+    let heading = opts.heading;
+    if (heading == null && !fromOverride && a.me && gps.fix && (gps.fix.speed || 0) > 3 && gps.heading != null) heading = gps.heading;
+    const base = `${OSRM}${a.lon},${a.lat};${b.lon},${b.lat}?overview=full&geometries=geojson&steps=true&alternatives=${drive.on ? 'false' : 'true'}`;
+    const ask = async (useBearing, useExclude) => {
+      let u = base;
+      if (useBearing && heading != null) u += `&bearings=${Math.round((heading % 360 + 360) % 360)},60;`;
+      if (useExclude) u += '&exclude=motorway';
+      return (await fetch(u)).json();
+    };
     try {
-      const r = await fetch(`${OSRM}${a.lon},${a.lat};${b.lon},${b.lat}?overview=full&geometries=geojson&steps=true&alternatives=${drive.on ? 'false' : 'true'}`);
-      const j = await r.json();
+      const wantEx = settings.noMotorway && !osrmNoExclude;
+      let j = await ask(true, wantEx);
+      // il server non conosce "exclude": si riprova senza e non lo si chiede più
+      if (wantEx && j.code !== 'Ok' && /exclude|invalid/i.test(`${j.code} ${j.message}`)) { osrmNoExclude = true; j = await ask(true, false); }
+      // partenza agganciata a una strada lontana (sei in autostrada ma sono escluse): senza esclusione
+      else if (wantEx && j.code === 'Ok' && j.waypoints && j.waypoints[0].distance > 40) j = await ask(true, false);
+      // direzione impossibile (GPS impreciso): senza direzione
+      if (j.code !== 'Ok' && heading != null) j = await ask(false, settings.noMotorway && !osrmNoExclude);
       if (my !== routeReq) return;
       if (j.code !== 'Ok' || !j.routes || !j.routes.length) throw new Error(j.message || 'nessun percorso');
       routes = j.routes; routeIdx = 0;
@@ -485,17 +502,21 @@
     buildNotes(); drawRoute(false); renderSheet();
     if (drive.on) drive.resync();
   }
-  function projectOnRoute(lat, lon, route, i0 = 0, i1 = route.pts.length - 1) {
+  // heading (facoltativo): scarta i tratti percorsi nel verso opposto, così nei tornanti
+  // il GPS non si aggancia all'altro lato della curva
+  function projectOnRoute(lat, lon, route, i0 = 0, i1 = route.pts.length - 1, heading = null) {
     const [x, y] = route.proj.fwd(lon, lat);
     let best = { d: Infinity, s: 0, i: 0 };
     const a = Math.max(0, i0), b = Math.min(route.pts.length - 1, i1);
     for (let i = a; i < b; i++) {
       const p = route.pts[i], q = route.pts[i + 1];
       const dx = q[0] - p[0], dy = q[1] - p[1], L2 = dx * dx + dy * dy || 1e-9;
+      if (heading != null && Math.abs(angDiff(toDeg(Math.atan2(dx, dy)), heading)) > 75) continue;
       let t = ((x - p[0]) * dx + (y - p[1]) * dy) / L2; t = Math.max(0, Math.min(1, t));
       const px = p[0] + dx * t, py = p[1] + dy * t, d = Math.hypot(x - px, y - py);
       if (d < best.d) best = { d, s: route.s[i] + (route.s[i + 1] - route.s[i]) * t, i };
     }
+    if (heading != null && best.d === Infinity) return projectOnRoute(lat, lon, route, i0, i1, null);
     return best;
   }
   function pointAtS(route, s) {
@@ -872,18 +893,30 @@
       step();
     },
     onFix(lat, lon, speed, acc, t, heading) {
-      const route = cur.gen.route, prev = this.fix;
-      let pr = projectOnRoute(lat, lon, route, (prev ? prev.i : 0) - 40, (prev ? prev.i : 0) + 600);
-      if (pr.d > 50) pr = projectOnRoute(lat, lon, route);
-      const v = speed != null && speed >= 0 ? speed : (prev ? Math.max(0, (pr.s - prev.s) / Math.max(0.5, (t - prev.t) / 1000)) : 0);
+      const route = cur.gen.route, prev = this.fix, n = route.pts.length;
       if (heading != null) this.lastHeading = heading;
       else if (prev && distLL(prev.ll, [lat, lon]) > 5) this.lastHeading = bearingLL(prev.ll, [lat, lon]);
+      // la direzione serve solo se ci si muove davvero
+      const hd = (speed == null || speed > 3) && (heading != null || (prev && distLL(prev.ll, [lat, lon]) > 5)) ? this.lastHeading : null;
+      // si cerca vicino all'ultima posizione (un po' indietro, fino a ~4 km avanti), mai su tutto il percorso:
+      // in montagna il percorso ripassa vicino a sé stesso e si rischierebbe di saltare all'altro tratto
+      let pr;
+      if (!prev) pr = projectOnRoute(lat, lon, route, 0, n - 1, hd);
+      else {
+        pr = projectOnRoute(lat, lon, route, prev.i - 40, prev.i + 800, hd);
+        if (pr.d > 60) { const w = projectOnRoute(lat, lon, route, prev.i - 200, prev.i + 1600, hd); if (w.d < pr.d) pr = w; }
+        // GPS impreciso (galleria, valle stretta): non si salta, si resta dov'eri
+        if (pr.d > 60 && (acc || 99) > 40) pr = { d: pr.d, s: prev.s, i: prev.i };
+      }
+      const v = speed != null && speed >= 0 ? speed : (prev ? Math.max(0, (pr.s - prev.s) / Math.max(0.5, (t - prev.t) / 1000)) : 0);
       this.fix = { s: pr.s, i: pr.i, t, v, d: pr.d, ll: [lat, lon] };
-      if (!this.sim && pr.d > 60 && (acc || 99) < 60) this.off++; else { this.off = 0; this.offWarned = false; }
-      if (this.off >= 4 && !this.rerouting) {
+      // fuori percorso solo se il GPS è buono, ti muovi e sei lontano per 5 posizioni di fila
+      if (!this.sim && pr.d > 50 && (acc || 99) <= 40 && v > 2) this.off++;
+      else if (pr.d < 30) { this.off = 0; this.offWarned = false; }
+      if (this.off >= 5 && !this.rerouting && Date.now() > (this.nextReroute || 0)) {
         // su una prova salvata non si ricalcola: si avvisa e si aspetta che torni sul percorso
         if (cur.stage) { if (!this.offWarned) { this.offWarned = true; toast('Sei fuori dal percorso della prova', 4000); voice.say(['attento']); } }
-        else this.reroute(lat, lon);
+        else this.reroute(lat, lon, hd);
       }
       if (!this.sim && settings.learn) this.learn(pr.s, v, pr.d);
     },
@@ -898,15 +931,17 @@
       if (!this.cc) { const n = cur.notes.find(x => x.kind === 'corner' && s >= x.startS - 10 && s <= x.endS + 10); if (n) this.cc = { note: n, vmin: v }; }
       else this.cc.vmin = Math.min(this.cc.vmin, v);
     },
-    async reroute(lat, lon) {
+    async reroute(lat, lon, hd) {
       this.rerouting = true; this.off = 0;
-      voice.say(['ricalcolo']);
-      try { await computeRoute({ lat, lon, name: 'Posizione' }); this.resync(); } catch { /* riprova al prossimo fuori percorso */ }
-      setTimeout(() => this.rerouting = false, 8000);
+      // "ricalcolo" al massimo una volta al minuto
+      if (Date.now() - (this.lastRecalcVoice || 0) > 60000) { this.lastRecalcVoice = Date.now(); voice.say(['ricalcolo']); }
+      try { await computeRoute({ lat, lon, name: 'Posizione' }, { heading: hd }); this.resync(); } catch { /* riprova più tardi */ }
+      this.rerouting = false;
+      this.nextReroute = Date.now() + 25000; // almeno 25 secondi tra un ricalcolo e l'altro
     },
     resync() {
       if (!this.fix) { this.idx = 0; return; }
-      const pr = projectOnRoute(this.fix.ll[0], this.fix.ll[1], cur.gen.route);
+      const pr = projectOnRoute(this.fix.ll[0], this.fix.ll[1], cur.gen.route, 0, cur.gen.route.pts.length - 1, this.fix.v > 3 ? this.lastHeading : null);
       this.fix.s = pr.s; this.fix.i = pr.i; this.fix.d = pr.d;
       this.idx = cur.calls.findIndex(c => c.startS > pr.s - 5); if (this.idx < 0) this.idx = cur.calls.length;
     },
@@ -1208,6 +1243,7 @@
     const sv = $('selView'); sv.value = settings.view; sv.addEventListener('change', () => { settings.view = sv.value; upd(); });
     const am = $('selAudio'); am.value = settings.audioMode; am.addEventListener('change', () => { settings.audioMode = am.value; upd(); voice.setSession(); if (drive.on) { voice.keepAlive(false); voice.keepAlive(true); } });
     bindCheck('tCompass', 'compass', () => { if (settings.compass) startCompass(); });
+    bindCheck('tNoMotorway', 'noMotorway', () => { if (cur && !cur.stage && !drive.on && places.from && places.to) computeRoute().catch(() => {}); });
     const s3 = $('selCar3d'); s3.value = settings.car3d; s3.addEventListener('change', () => { settings.car3d = s3.value; upd(); car.redraw(); });
     $('carModels').addEventListener('click', e => { const b = e.target.closest('[data-m]'); if (!b) return; settings.car = b.dataset.m; upd(); renderCars(); car.redraw(); });
     $('carLiveries').addEventListener('click', e => { const b = e.target.closest('[data-l]'); if (!b) return; settings.livery = b.dataset.l; upd(); renderCars(); car.redraw(); });
