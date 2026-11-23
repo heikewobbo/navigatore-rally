@@ -1258,6 +1258,14 @@
     }
   };
   $('btnStages').addEventListener('click', () => { stages.list(); $('stagesModal').hidden = false; });
+  // esporta prove, ostacoli, taratura e impostazioni in un file (per APEX)
+  $('btnExport').addEventListener('click', async () => {
+    const data = { app: 'navigatore-rally', v: 1, stages: [...(await db.getAll('stages').catch(() => new Map())).values()], obstacles, calib: (await db.get('calib', 'samples').catch(() => null)) || [], settings };
+    const file = new File([JSON.stringify(data)], 'navigatore-rally.json', { type: 'application/json' });
+    try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Navigatore rally' }); return; } } catch { /* annullato: si scarica */ }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name; document.body.appendChild(a); a.click(); a.remove();
+    toast(data.stages.length + ' prove esportate');
+  });
   $('stagesModal').addEventListener('click', async e => {
     if (e.target === $('stagesModal') || e.target.closest('#btnStagesClose')) { $('stagesModal').hidden = true; return; }
     const b = e.target.closest('button'); const li = e.target.closest('li[data-id]'); if (!b || !li) return;
